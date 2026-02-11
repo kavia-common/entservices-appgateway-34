@@ -229,7 +229,9 @@ EOF
   fi
 
   echo "Step: Configure CMake ($build_type) -> $build_dir"
-  cmake -S "$workspace" -B "$build_dir" -DCMAKE_BUILD_TYPE="$build_type"
+  cmake -S "$workspace" -B "$build_dir" \
+    -DCMAKE_BUILD_TYPE="$build_type" \
+    -DRDK_SERVICES_L1_TEST=ON
 
   echo "Step: Build"
   cmake --build "$build_dir" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"

@@ -20,10 +20,6 @@ CMAKE_ADDR2LINE:FILEPATH=/usr/bin/addr2line
 //Path to a program.
 CMAKE_AR:FILEPATH=/usr/bin/ar
 
-//Choose the type of build, options are: None Debug Release RelWithDebInfo
-// MinSizeRel ...
-CMAKE_BUILD_TYPE:STRING=Debug
-
 //Enable/Disable color output during build.
 CMAKE_COLOR_MAKEFILE:BOOL=ON
 
@@ -37,9 +33,6 @@ CMAKE_CXX_COMPILER_AR:FILEPATH=/usr/bin/gcc-ar-13
 //A wrapper around 'ranlib' adding the appropriate '--plugin' option
 // for the GCC compiler
 CMAKE_CXX_COMPILER_RANLIB:FILEPATH=/usr/bin/gcc-ranlib-13
-
-//Flags used by the CXX compiler during all build types.
-CMAKE_CXX_FLAGS:STRING=
 
 //Flags used by the CXX compiler during DEBUG builds.
 CMAKE_CXX_FLAGS_DEBUG:STRING=-g
@@ -63,9 +56,6 @@ CMAKE_C_COMPILER_AR:FILEPATH=/usr/bin/gcc-ar-13
 //A wrapper around 'ranlib' adding the appropriate '--plugin' option
 // for the GCC compiler
 CMAKE_C_COMPILER_RANLIB:FILEPATH=/usr/bin/gcc-ranlib-13
-
-//Flags used by the C compiler during all build types.
-CMAKE_C_FLAGS:STRING=
 
 //Flags used by the C compiler during DEBUG builds.
 CMAKE_C_FLAGS_DEBUG:STRING=-g
@@ -148,7 +138,7 @@ CMAKE_PROJECT_DESCRIPTION:STATIC=
 CMAKE_PROJECT_HOMEPAGE_URL:STATIC=
 
 //Value Computed by CMake
-CMAKE_PROJECT_NAME:STATIC=Project
+CMAKE_PROJECT_NAME:STATIC=entservices-appgateway
 
 //Path to a program.
 CMAKE_RANLIB:FILEPATH=/usr/bin/ranlib
@@ -215,6 +205,9 @@ CMAKE_TAPI:FILEPATH=CMAKE_TAPI-NOTFOUND
 // Studio IDE projects all commands are done without /nologo.
 CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 
+//The directory containing a CMake configuration file for ConfigGenerator.
+ConfigGenerator_DIR:PATH=ConfigGenerator_DIR-NOTFOUND
+
 //Disable security token
 DISABLE_SECURITY_TOKEN:BOOL=OFF
 
@@ -227,8 +220,23 @@ Project_IS_TOP_LEVEL:STATIC=ON
 //Value Computed by CMake
 Project_SOURCE_DIR:STATIC=/home/kavia/workspace/code-generation/entservices-appgateway-34
 
+//No help, variable specified on the command line.
+RDK_SERVICES_L1_TEST:UNINITIALIZED=ON
+
+//The directory containing a CMake configuration file for WPEFrameworkPlugins.
+WPEFrameworkPlugins_DIR:PATH=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFrameworkPlugins
+
 //The directory containing a CMake configuration file for WPEFramework.
-WPEFramework_DIR:PATH=WPEFramework_DIR-NOTFOUND
+WPEFramework_DIR:PATH=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFramework
+
+//Value Computed by CMake
+entservices-appgateway_BINARY_DIR:STATIC=/home/kavia/workspace/code-generation/entservices-appgateway-34/build_l1
+
+//Value Computed by CMake
+entservices-appgateway_IS_TOP_LEVEL:STATIC=ON
+
+//Value Computed by CMake
+entservices-appgateway_SOURCE_DIR:STATIC=/home/kavia/workspace/code-generation/entservices-appgateway-34
 
 
 ########################
@@ -239,6 +247,7 @@ WPEFramework_DIR:PATH=WPEFramework_DIR-NOTFOUND
 CMAKE_ADDR2LINE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_AR
 CMAKE_AR-ADVANCED:INTERNAL=1
+CMAKE_BUILD_TYPE:INTERNAL=MinSizeRel
 //This is the directory where this CMakeCache.txt was created
 CMAKE_CACHEFILE_DIR:INTERNAL=/home/kavia/workspace/code-generation/entservices-appgateway-34/build_l1
 //Major version of cmake used to create the current loaded cache
@@ -263,6 +272,7 @@ CMAKE_CXX_COMPILER_AR-ADVANCED:INTERNAL=1
 CMAKE_CXX_COMPILER_RANLIB-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_CXX_FLAGS
 CMAKE_CXX_FLAGS-ADVANCED:INTERNAL=1
+CMAKE_CXX_FLAGS:INTERNAL=
 //ADVANCED property for variable: CMAKE_CXX_FLAGS_DEBUG
 CMAKE_CXX_FLAGS_DEBUG-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_CXX_FLAGS_MINSIZEREL
@@ -271,6 +281,7 @@ CMAKE_CXX_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
 CMAKE_CXX_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_CXX_FLAGS_RELWITHDEBINFO
 CMAKE_CXX_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
+CMAKE_CXX_VISIBILITY_PRESET:INTERNAL=hidden
 //ADVANCED property for variable: CMAKE_C_COMPILER
 CMAKE_C_COMPILER-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_C_COMPILER_AR
@@ -279,6 +290,7 @@ CMAKE_C_COMPILER_AR-ADVANCED:INTERNAL=1
 CMAKE_C_COMPILER_RANLIB-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_C_FLAGS
 CMAKE_C_FLAGS-ADVANCED:INTERNAL=1
+CMAKE_C_FLAGS:INTERNAL=
 //ADVANCED property for variable: CMAKE_C_FLAGS_DEBUG
 CMAKE_C_FLAGS_DEBUG-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_C_FLAGS_MINSIZEREL
@@ -332,10 +344,11 @@ CMAKE_MODULE_LINKER_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
 CMAKE_MODULE_LINKER_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO
 CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
+CMAKE_MODULE_PATH:INTERNAL=/home/kavia/workspace/code-generation/entservices-appgateway-34/cmake/;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/include/WPEFramework/Modules;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFramework/common
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
-CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=1
+CMAKE_NUMBER_OF_MAKEFILES:INTERNAL=2
 //ADVANCED property for variable: CMAKE_OBJCOPY
 CMAKE_OBJCOPY-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_OBJDUMP
@@ -380,6 +393,12 @@ CMAKE_TAPI-ADVANCED:INTERNAL=1
 CMAKE_UNAME:INTERNAL=/usr/bin/uname
 //ADVANCED property for variable: CMAKE_VERBOSE_MAKEFILE
 CMAKE_VERBOSE_MAKEFILE-ADVANCED:INTERNAL=1
+CMAKE_VISIBILITY_INLINES_HIDDEN:INTERNAL=1
+LEGACY_CONFIG_GENERATOR:INTERNAL=ON
+MODULE_BASE_DIR:INTERNAL=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFramework
+NAMESPACE:INTERNAL=WPEFramework
+STORAGE_DIRECTORY:INTERNAL=wpeframework
+WPEFramework_FOUND:INTERNAL=TRUE
 //linker supports push/pop state
 _CMAKE_LINKER_PUSHPOP_STATE_SUPPORTED:INTERNAL=TRUE
 
