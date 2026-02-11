@@ -5,5 +5,8 @@
 # The ConfigGenerator will substitute @locator@ and @classname@ when generating the final
 # JSON config for the plugin.
 
-locator=@locator@
-classname=@classname@
+# NOTE:
+# ConfigGenerator loads this file as Python. Keep assignments valid even when CMake
+# substitutes empty strings (e.g. when LOCATOR/CLASSNAME are not provided).
+locator="@locator@"
+classname="@classname@"
