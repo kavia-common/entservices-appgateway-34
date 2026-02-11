@@ -1,12 +1,9 @@
 # L1TestsIN config template used by WPEFramework ConfigGenerator during CMake configure.
-# This file is intentionally minimal: the test plugin is a shared library loaded by the
-# test harness, and it does not require plugin-specific runtime configuration.
 #
-# The ConfigGenerator will substitute @locator@ and @classname@ when generating the final
-# JSON config for the plugin.
-
-# NOTE:
-# ConfigGenerator loads this file as Python. Keep assignments valid even when CMake
-# substitutes empty strings (e.g. when LOCATOR/CLASSNAME are not provided).
-locator="@locator@"
-classname="@classname@"
+# IMPORTANT:
+# ConfigGenerator loads this file as Python, and will ERROR on any non-whitelisted
+# variables. Do not define "locator" or "classname" here: those are injected by
+# ConfigGenerator itself via the -l/--locator and -c/--classname CLI arguments
+# (see install/tools/cmake/FindConfigGenerator.cmake -> write_config()).
+#
+# This plugin has no additional configuration parameters, so this file is intentionally empty.

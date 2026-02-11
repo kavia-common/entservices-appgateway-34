@@ -31,11 +31,14 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/install/tools/cmake")
 
 # Host-shell / CI convenience:
 # Prefer the repo-bundled WPEFramework CMake package when available (install/usr/lib/cmake/WPEFramework/...)
-# This makes `find_package(WPEFramework)
+# This makes `find_package(WPEFramework)` work without requiring a system-wide Thunder/WPEFramework SDK.
 #
-# Enable CTest/CTestTestfile.cmake generation for this build.
-# Without this, `ctest` will report "No tests were found" even if test targets exist.
-include(CTest) # work without requiring a system-wide Thunder/WPEFramework SDK.
+# NOTE (host-shell/CI):
+# Do NOT include(CTest) at top-level. In some restricted environments this triggers
+# /usr/share/cmake-*/Modules/CTestTargets.cmake which uses configure_file() and can fail
+# with "Operation not permitted" during configure.
+#
+# We enable testing only when L1/L2 tests are requested (see below).
 if(EXISTS "${CMAKE_SOURCE_DIR}/install/usr/lib/cmake/WPEFramework/WPEFrameworkConfig.cmake")
     list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/install/usr")
 endif()
@@ -66,6 +69,7 @@ endif()
 option(DISABLE_SECURITY_TOKEN "Disable security token" OFF)
 
 if(RDK_SERVICES_L1_TEST)
+    enable_testing()
     add_subdirectory(Tests/L1Tests)
 endif()
 
