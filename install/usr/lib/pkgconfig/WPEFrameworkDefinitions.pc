@@ -1,0 +1,11 @@
+prefix=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr
+exec_prefix=${prefix}
+libdir=${prefix}/lib
+includedir=${prefix}/include/
+
+Name: WPEFrameworkDefinitions
+Version: 4.4.1
+Description: Share lookup tables associated with interface enums.
+
+Libs: -L${libdir}  -lWPEFrameworkDefinitions 
+Cflags: -I${includedir}   
