@@ -19,19 +19,33 @@
 
 cmake_minimum_required(VERSION 3.3)
 
-find_package(WPEFramework)
+project(entservices-appgateway LANGUAGES C CXX)
 
 # All packages that did not deliver a CMake Find script (and some deprecated scripts that need to be removed)
 # are located in the cmake directory. Include it in the search.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
+# Host-shell / CI convenience:
+# Prefer the repo-bundled WPEFramework CMake package when available (install/usr/lib/cmake/WPEFramework/...)
+# This makes `find_package(WPEFramework)` work without requiring a system-wide Thunder/WPEFramework SDK.
+if(EXISTS "${CMAKE_SOURCE_DIR}/install/usr/lib/cmake/WPEFramework/WPEFrameworkConfig.cmake")
+    list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/install/usr")
+endif()
+
+find_package(WPEFramework)
+
 # Product configuration dir
 set(PRODUCT_CONFIG_DIR "/etc/entservices")
 
 # Library installation section
-string(TOLOWER ${NAMESPACE} STORAGE_DIRECTORY)
+# NAMESPACE is normally provided by WPEFrameworkConfig.cmake; keep a safe fallback for host builds.
+if(DEFINED NAMESPACE)
+    string(TOLOWER "${NAMESPACE}" STORAGE_DIRECTORY)
+else()
+    set(STORAGE_DIRECTORY "wpeframework")
+endif()
 
-# for writing pc and config files
+# for writing pc and config files (provided by WPEFramework under .../common)
 include(CmakeHelperFunctions)
 
 if(RDK_SERVICE_L2_TEST)

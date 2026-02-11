@@ -222,6 +222,12 @@ EOF
     echo "INFO: build_dependencies.sh not found or not executable; skipping."
   fi
 
+  # Ensure bundled WPEFramework cmake package can be discovered in host runs.
+  # (Allows find_package(WPEFramework) to succeed without system-wide Thunder SDK installation.)
+  if [[ -d "$workspace/install/usr/lib/cmake/WPEFramework" ]]; then
+    export CMAKE_PREFIX_PATH="${workspace}/install/usr${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
+  fi
+
   echo "Step: Configure CMake ($build_type) -> $build_dir"
   cmake -S "$workspace" -B "$build_dir" -DCMAKE_BUILD_TYPE="$build_type"
 
