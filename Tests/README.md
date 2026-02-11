@@ -14,6 +14,15 @@ c/ Build entservices-testframework => To create L1/L2  executable by linking the
 This ensures everything in-tact in repo level across multiple related plugins when there is a new change comes in.
 
 ##### Steps to run L1, L2, L2-OOP test locally #####
+
+There are two common ways to run the repo’s CI tests locally.
+
+The first way is to use `act` to execute the GitHub workflows locally, which most closely matches GitHub Actions behavior (including dependency bootstrapping, running the `RdkServicesL1Test` binary, valgrind, and LCOV coverage generation when enabled in the workflow).
+
+The second way is to use the repo-provided host-shell runner `run_l1_tests.sh`. That script is intentionally lighter weight and is designed for constrained environments; it applies patches idempotently and then runs a CMake + CTest pass for this repository. It does not reproduce all GitHub Actions steps such as valgrind runs or LCOV HTML generation.
+
+For a detailed comparison (including the exact LCOV commands the workflow runs), see `docs/l1-workflow-vs-runner.md`.
+
 ```
 1. checkout the entservices-<repo-name> to your working directory in your build machine.
 example: git clone https://github.com/rdkcentral/entservices-deviceanddisplay.git
