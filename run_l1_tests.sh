@@ -1,9 +1,11 @@
 #!/usr/bin/env bash
-# L1 test runner script (host-shell) - idempotent patch application
+# L1 test runner script (host-shell)
 #
-# This script is intended to be re-runnable: patch steps will not prompt
-# interactively and will cleanly skip patches that are already applied
-# or already reversed.
+# Goals:
+#  - Ensure ThunderTools is at the expected *clean* revision before applying
+#    entservices-testframework patches (prevents patch mismatch / reverse-detect prompts).
+#  - Apply patches idempotently and non-interactively (no "Assume -R?" prompts).
+
 set -euo pipefail
 
 ###############################################################################
@@ -56,7 +58,7 @@ apply_patch_idempotent() {
   # --batch      : never prompt (prevents "Assume -R?" / "Apply anyway?")
   # --silent     : reduce noise
   # --dry-run    : detection without touching files
-  # --binary     : avoid CRLF "Stripping trailing CRs..." normalization behavior/messages
+  # --binary     : avoid CRLF normalization prompts/noise ("Stripping trailing CRs...")
   # --forward    : when applying, do not apply reversed patches
   # -N           : when applying, ignore already-applied hunks (keeps it idempotent)
   pushd "$target_dir" >/dev/null
@@ -83,23 +85,81 @@ apply_patch_idempotent() {
 }
 
 ###############################################################################
-# Main (minimal skeleton; integrate into existing workflow-generated script)
+# ThunderTools revision pinning (required for entservices-testframework patches)
+###############################################################################
+
+# PUBLIC_INTERFACE
+ensure_thundertools_expected_revision() {
+  """Reset ThunderTools to the expected tag/commit before applying patches.
+
+  The entservices-testframework patchset (notably 00010-R4.4-Add-support-for-project-dir.patch)
+  is authored against a specific ThunderTools baseline. If ThunderTools has local
+  modifications or is at a different revision, patch(1) may detect "reversed" hunks
+  and (in interactive mode) would prompt; here we avoid prompts and avoid mismatches
+  by checking out the expected revision.
+
+  Behavior:
+    - If ThunderTools is not a git repo: fail.
+    - Fetch tags (best-effort).
+    - checkout + hard reset to expected revision.
+    - clean untracked files to ensure a pristine tree.
+
+  Environment:
+    - THUNDERTOOLS_EXPECTED_REF (optional): git ref (tag/commit). Defaults to "R4.4.3".
+
+  """
+  local workspace="${1:?workspace required}"
+  local tt_dir="$workspace/ThunderTools"
+  local expected_ref="${THUNDERTOOLS_EXPECTED_REF:-R4.4.3}"
+
+  if [[ ! -d "$tt_dir" ]]; then
+    echo "ERROR: ThunderTools directory not found at: $tt_dir" >&2
+    return 2
+  fi
+  if [[ ! -d "$tt_dir/.git" ]]; then
+    echo "ERROR: ThunderTools is not a git repository: $tt_dir" >&2
+    return 2
+  fi
+
+  echo "Step: Reset ThunderTools to expected revision: ${expected_ref}"
+  pushd "$tt_dir" >/dev/null
+
+  # Best-effort to ensure tags/refs are available locally.
+  # (If fetch fails due to offline environment, checkout may still work if ref exists locally.)
+  git fetch --tags --force >/dev/null 2>&1 || true
+  git fetch --all --prune >/dev/null 2>&1 || true
+
+  # Ensure a clean baseline matching the patch author's expectation.
+  git checkout -f "${expected_ref}" >/dev/null 2>&1 || {
+    echo "ERROR: Failed to checkout ThunderTools ref '${expected_ref}'." >&2
+    echo "  Available tags (sample):" >&2
+    git tag -l | tail -n 20 >&2 || true
+    popd >/dev/null
+    return 1
+  }
+  git reset --hard "${expected_ref}" >/dev/null
+  git clean -ffd >/dev/null
+
+  echo "ThunderTools now at: $(git describe --tags --always --dirty)"
+  popd >/dev/null
+}
+
+###############################################################################
+# Main
 ###############################################################################
 
 # NOTE: This script is a host-shell translation of the L1 workflow.
 # Update the paths below if your workspace layout differs.
 GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
 
-# Example idempotent patch applications matching the workflow steps.
-# These paths mirror the workflow structure:
-#   ThunderTools: entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch
-#   Thunder:      multiple patches
-#   entservices-apis: RDKEMW-1007.patch
-#
-# If your script already performs these steps, keep the rest of the script intact
-# and replace only the raw `patch -p1 < ...` lines with `apply_patch_idempotent ...`.
+# Ensure ThunderTools is at the right baseline before patching it.
+if [[ -d "$GITHUB_WORKSPACE/ThunderTools" ]]; then
+  ensure_thundertools_expected_revision "$GITHUB_WORKSPACE"
+fi
 
+# Apply entservices-testframework patches idempotently.
 if [[ -d "$GITHUB_WORKSPACE/ThunderTools" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
+  echo "Step: Apply patches to ThunderTools"
   apply_patch_idempotent \
     "$GITHUB_WORKSPACE/ThunderTools" \
     1 \
@@ -107,6 +167,7 @@ if [[ -d "$GITHUB_WORKSPACE/ThunderTools" && -d "$GITHUB_WORKSPACE/entservices-t
 fi
 
 if [[ -d "$GITHUB_WORKSPACE/Thunder" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
+  echo "Step: Apply patches to Thunder"
   apply_patch_idempotent \
     "$GITHUB_WORKSPACE/Thunder" \
     1 \
@@ -134,12 +195,12 @@ if [[ -d "$GITHUB_WORKSPACE/Thunder" && -d "$GITHUB_WORKSPACE/entservices-testfr
 fi
 
 if [[ -d "$GITHUB_WORKSPACE/entservices-apis" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
+  echo "Step: Apply patches to entservices-apis"
   apply_patch_idempotent \
     "$GITHUB_WORKSPACE/entservices-apis" \
     1 \
     "$GITHUB_WORKSPACE/entservices-testframework/patches/RDKEMW-1007.patch"
 fi
 
-# The remainder of the original run_l1_tests.sh should follow here (build steps, etc.).
-# This file is intentionally focused on the patch-idempotency fix requested.
+# The remainder of the original run_l1_tests.sh (build/test steps) should follow here.
 echo "Patch application stage completed (idempotent)."
