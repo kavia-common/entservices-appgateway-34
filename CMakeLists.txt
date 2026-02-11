@@ -28,10 +28,10 @@ list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 # Host-shell / CI convenience:
 # Prefer the repo-bundled WPEFramework CMake package when available (install/usr/lib/cmake/WPEFramework/...)
 # This makes `find_package(WPEFramework)
-
+#
 # Enable CTest/CTestTestfile.cmake generation for this build.
 # Without this, `ctest` will report "No tests were found" even if test targets exist.
-include(CTest)` work without requiring a system-wide Thunder/WPEFramework SDK.
+include(CTest) # work without requiring a system-wide Thunder/WPEFramework SDK.
 if(EXISTS "${CMAKE_SOURCE_DIR}/install/usr/lib/cmake/WPEFramework/WPEFrameworkConfig.cmake")
     list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_SOURCE_DIR}/install/usr")
 endif()
