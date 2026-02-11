@@ -242,6 +242,9 @@ MEMORYCHECK_COMMAND:FILEPATH=/usr/bin/valgrind
 //File that contains suppressions for the memory checker
 MEMORYCHECK_SUPPRESSIONS_FILE:FILEPATH=
 
+//Path to a program.
+PYTHON_EXECUTABLE:FILEPATH=/usr/bin/python3
+
 //Value Computed by CMake
 Project_BINARY_DIR:STATIC=/home/kavia/workspace/code-generation/entservices-appgateway-34/build_l1
 
@@ -398,7 +401,7 @@ CMAKE_MODULE_LINKER_FLAGS_MINSIZEREL-ADVANCED:INTERNAL=1
 CMAKE_MODULE_LINKER_FLAGS_RELEASE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO
 CMAKE_MODULE_LINKER_FLAGS_RELWITHDEBINFO-ADVANCED:INTERNAL=1
-CMAKE_MODULE_PATH:INTERNAL=/home/kavia/workspace/code-generation/entservices-appgateway-34/cmake/;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/include/WPEFramework/Modules;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFramework/common
+CMAKE_MODULE_PATH:INTERNAL=/home/kavia/workspace/code-generation/entservices-appgateway-34/cmake/;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/tools/cmake;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/include/WPEFramework/Modules;/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFramework/common
 //ADVANCED property for variable: CMAKE_NM
 CMAKE_NM-ADVANCED:INTERNAL=1
 //number of local generators
@@ -469,6 +472,8 @@ MEMORYCHECK_COMMAND-ADVANCED:INTERNAL=1
 MEMORYCHECK_SUPPRESSIONS_FILE-ADVANCED:INTERNAL=1
 MODULE_BASE_DIR:INTERNAL=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib/cmake/WPEFramework
 NAMESPACE:INTERNAL=WPEFramework
+//ADVANCED property for variable: PYTHON_EXECUTABLE
+PYTHON_EXECUTABLE-ADVANCED:INTERNAL=1
 //ADVANCED property for variable: SITE
 SITE-ADVANCED:INTERNAL=1
 STORAGE_DIRECTORY:INTERNAL=wpeframework
