@@ -160,10 +160,11 @@ run_build_and_l1_tests() {
   #   - CMAKE_BUILD_TYPE (optional): Defaults to "Debug".
   #   - CTEST_PARALLEL_LEVEL (optional): If set, enables parallel ctest execution.
   #   - INSTALL_DEPS (optional): Controls dependency installation behavior.
-  #       * auto (default): attempt to run build_dependencies.sh only if we appear to have permission
-  #                         to run apt (root or passwordless sudo); otherwise skip with prerequisites.
+  #       * auto (default): DO NOT install dependencies in this CI/container environment.
+  #                         Always skip build_dependencies.sh and proceed to configure/build/test.
+  #                         (This avoids apt/lock/permission failures breaking the test workflow.)
   #       * 0/false/no/off: never install; skip with prerequisites.
-  #       * 1/true/yes/on : force running build_dependencies.sh (may fail if apt requires privileges).
+  #       * 1/true/yes/on : explicitly force running build_dependencies.sh (may still fail if apt requires privileges).
   #
   # Returns:
   #   0 on success; non-zero on failure.
@@ -174,33 +175,34 @@ run_build_and_l1_tests() {
 
   echo "Step: Build dependencies (optional)"
   if [[ -x "$workspace/build_dependencies.sh" ]]; then
-    # Determine if we can likely run apt in this environment.
-    local can_apt="false"
-    if [[ "$(id -u)" -eq 0 ]]; then
-      can_apt="true"
-    elif command -v sudo >/dev/null 2>&1; then
-      # passwordless sudo check (non-interactive)
-      if sudo -n true >/dev/null 2>&1; then
-        can_apt="true"
-      fi
-    fi
-
+    # IMPORTANT:
+    # In this environment, apt often fails due to missing privileges (e.g., lock file permission denied).
+    # Therefore, default behavior is to SKIP dependency installation even if running as root.
+    #
+    # Only run build_dependencies.sh when explicitly forced via INSTALL_DEPS=1 (or true/yes/on).
     case "${install_deps,,}" in
-      0|false|no|off)
-        echo "INFO: INSTALL_DEPS=${install_deps}. Skipping dependency installation."
-        ;;
       1|true|yes|on)
-        echo "INFO: INSTALL_DEPS=${install_deps}. Forcing dependency installation via build_dependencies.sh"
+        # Best-effort check: only to provide a clearer message before attempting apt.
+        # This is NOT used to auto-enable installation.
+        local apt_priv_hint="unknown"
+        if [[ "$(id -u)" -eq 0 ]]; then
+          apt_priv_hint="root"
+        elif command -v sudo >/dev/null 2>&1 && sudo -n true >/dev/null 2>&1; then
+          apt_priv_hint="passwordless-sudo"
+        else
+          apt_priv_hint="no-privileges-detected"
+        fi
+
+        echo "INFO: INSTALL_DEPS=${install_deps}. Forcing dependency installation via build_dependencies.sh (priv_hint=${apt_priv_hint})"
         "$workspace/build_dependencies.sh"
         ;;
-      auto)
-        if [[ "$can_apt" == "true" ]]; then
-          echo "INFO: INSTALL_DEPS=auto and apt privileges detected. Running build_dependencies.sh"
-          "$workspace/build_dependencies.sh"
-        else
-          cat >&2 <<'EOF'
-INFO: INSTALL_DEPS=auto but this environment does not appear to have permissions to run apt.
-Skipping build_dependencies.sh and proceeding to configure/build/test.
+      auto|0|false|no|off)
+        cat >&2 <<'EOF'
+INFO: Dependency installation is skipped by default in this environment (INSTALL_DEPS=auto).
+Proceeding to configure/build/test.
+
+If you WANT this script to attempt apt/pip installs, re-run with:
+  INSTALL_DEPS=1 ./run_l1_tests.sh
 
 Prerequisites (install these via your base image / CI runner / manual setup):
   - build tools: cmake, ninja (optional), make, pkg-config, gcc/g++
@@ -209,11 +211,7 @@ Prerequisites (install these via your base image / CI runner / manual setup):
       libwebsocketpp-dev, protobuf-compiler-grpc, libgrpc-dev, libgrpc++-dev, libunwind-dev,
       libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev
   - python package: jsonref (pip install jsonref)
-
-If you WANT this script to attempt installation, re-run with:
-  INSTALL_DEPS=1 ./run_l1_tests.sh
 EOF
-        fi
         ;;
       *)
         echo "ERROR: Unknown INSTALL_DEPS value: '$install_deps' (expected auto|0|1|true|false...)" >&2
