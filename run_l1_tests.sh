@@ -39,29 +39,37 @@ apply_patch_idempotent() {
     return 2
   fi
 
-  # Ensure patch doesn't prompt, and avoid generating .rej by first doing dry-runs.
-  # -N helps ignore already-applied hunks when actually applying.
-  # --batch avoids interactive questions.
-  # --forward makes patch assume it's a forward patch (don't apply reversed).
+  # Non-interactive & .rej-safe approach:
+  # 1) Forward dry-run: if it applies cleanly, then apply for real.
+  # 2) Reverse dry-run: if that applies cleanly, patch is already applied (or tree is in reversed state) -> skip.
+  # 3) Otherwise: fail (do NOT use --force; it may create .rej files).
+  #
+  # Flags:
+  # --batch      : never prompt (prevents "Assume -R?" / "Apply anyway?")
+  # --silent     : reduce noise
+  # --dry-run    : detection without touching files
+  # --binary     : avoid CRLF "Stripping trailing CRs..." normalization behavior/messages
+  # --forward    : in apply step, don't apply reversed patches
+  # -N           : ignore already-applied hunks when applying forward (still non-interactive)
   pushd "$target_dir" >/dev/null
 
-  if patch "-p${strip_level}" --dry-run --silent --force --batch --forward <"$patch_file" >/dev/null 2>&1; then
+  if patch "-p${strip_level}" --dry-run --silent --batch --binary --forward <"$patch_file" >/dev/null 2>&1; then
     echo "Applying patch: $patch_file (in $target_dir)"
-    patch "-p${strip_level}" --silent --force --batch --forward -N <"$patch_file"
+    patch "-p${strip_level}" --silent --batch --binary --forward -N <"$patch_file" >/dev/null
     popd >/dev/null
     return 0
   fi
 
-  # If the patch is already applied, reverse dry-run should succeed.
-  if patch "-p${strip_level}" -R --dry-run --silent --force --batch <"$patch_file" >/dev/null 2>&1; then
-    echo "Skipping patch (already applied or reversed state detected): $patch_file (in $target_dir)"
+  # If reverse dry-run succeeds, the forward patch has already been applied. Skip without touching files.
+  if patch "-p${strip_level}" -R --dry-run --silent --batch --binary <"$patch_file" >/dev/null 2>&1; then
+    echo "Skipping patch (already applied): $patch_file (in $target_dir)"
     popd >/dev/null
     return 0
   fi
 
-  echo "ERROR: Patch does not apply cleanly (and is not already applied): $patch_file" >&2
+  echo "ERROR: Patch does not apply cleanly and is not already applied: $patch_file" >&2
   echo "  target_dir=$target_dir strip_level=$strip_level" >&2
-  echo "  HINT: inspect working tree changes or patch context drift." >&2
+  echo "  NOTE: This script refuses to force-apply patches to avoid generating .rej files." >&2
   popd >/dev/null
   return 1
 }
