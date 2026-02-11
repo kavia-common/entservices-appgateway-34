@@ -350,9 +350,12 @@ ensure_repo_cloned() {
   local remote_url="${2:?remote_url required}"
   local ref="${3:?ref required}"
 
+  # Some CI/workspaces can leave behind a directory named like the repo but without git metadata
+  # (e.g., extracted tarball, empty dir, partial checkout). For googletest we want to be resilient
+  # and re-clone to match the workflow ref.
   if [[ -d "$target_dir" && ! -d "$target_dir/.git" ]]; then
-    echo "ERROR: Path exists but is not a git repo: $target_dir" >&2
-    return 2
+    echo "INFO: Path exists but is not a git repo; removing so it can be re-cloned: $target_dir" >&2
+    rm -rf "$target_dir"
   fi
 
   if [[ ! -d "$target_dir" ]]; then
