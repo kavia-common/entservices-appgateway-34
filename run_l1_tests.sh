@@ -90,24 +90,22 @@ apply_patch_idempotent() {
 
 # PUBLIC_INTERFACE
 ensure_thundertools_expected_revision() {
-  """Reset ThunderTools to the expected tag/commit before applying patches.
-
-  The entservices-testframework patchset (notably 00010-R4.4-Add-support-for-project-dir.patch)
-  is authored against a specific ThunderTools baseline. If ThunderTools has local
-  modifications or is at a different revision, patch(1) may detect "reversed" hunks
-  and (in interactive mode) would prompt; here we avoid prompts and avoid mismatches
-  by checking out the expected revision.
-
-  Behavior:
-    - If ThunderTools is not a git repo: fail.
-    - Fetch tags (best-effort).
-    - checkout + hard reset to expected revision.
-    - clean untracked files to ensure a pristine tree.
-
-  Environment:
-    - THUNDERTOOLS_EXPECTED_REF (optional): git ref (tag/commit). Defaults to "R4.4.3".
-
-  """
+  # Reset ThunderTools to the expected tag/commit before applying patches.
+  #
+  # The entservices-testframework patchset (notably 00010-R4.4-Add-support-for-project-dir.patch)
+  # is authored against a specific ThunderTools baseline. If ThunderTools has local
+  # modifications or is at a different revision, patch(1) may detect "reversed" hunks
+  # and (in interactive mode) would prompt; here we avoid prompts and avoid mismatches
+  # by checking out the expected revision.
+  #
+  # Behavior:
+  #   - If ThunderTools is not a git repo: fail.
+  #   - Fetch tags (best-effort).
+  #   - checkout + hard reset to expected revision.
+  #   - clean untracked files to ensure a pristine tree.
+  #
+  # Environment:
+  #   - THUNDERTOOLS_EXPECTED_REF (optional): git ref (tag/commit). Defaults to "R4.4.3".
   local workspace="${1:?workspace required}"
   local tt_dir="$workspace/ThunderTools"
   local expected_ref="${THUNDERTOOLS_EXPECTED_REF:-R4.4.3}"
