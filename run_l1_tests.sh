@@ -332,6 +332,96 @@ EOF
 }
 
 ###############################################################################
+# Repo cloning helpers (mirror .github/workflows/L1-tests.yml)
+###############################################################################
+
+# PUBLIC_INTERFACE
+ensure_repo_cloned() {
+  # Ensure a git repo exists at a given directory, checked out at a specific ref.
+  #
+  # If the directory doesn't exist, it will be cloned.
+  # If it exists and is a git repo, it will fetch (best-effort) and checkout the ref.
+  #
+  # Args:
+  #   $1: target_dir (absolute path)
+  #   $2: remote_url (e.g., https://github.com/rdkcentral/Thunder.git)
+  #   $3: ref        (tag/branch/commit)
+  local target_dir="${1:?target_dir required}"
+  local remote_url="${2:?remote_url required}"
+  local ref="${3:?ref required}"
+
+  if [[ -d "$target_dir" && ! -d "$target_dir/.git" ]]; then
+    echo "ERROR: Path exists but is not a git repo: $target_dir" >&2
+    return 2
+  fi
+
+  if [[ ! -d "$target_dir" ]]; then
+    echo "Cloning: $remote_url -> $target_dir (ref=$ref)"
+    git clone --no-tags --depth 1 --branch "$ref" "$remote_url" "$target_dir" >/dev/null 2>&1 || {
+      # Fallback: some refs may be tags not reachable via --branch in shallow mode depending on server;
+      # do a full clone as a robust fallback.
+      echo "INFO: Shallow clone failed; retrying with full clone for $remote_url" >&2
+      git clone "$remote_url" "$target_dir"
+      pushd "$target_dir" >/dev/null
+      git checkout -f "$ref"
+      popd >/dev/null
+    }
+    return 0
+  fi
+
+  echo "Repo exists: $target_dir (ensuring ref=$ref)"
+  pushd "$target_dir" >/dev/null
+  git remote set-url origin "$remote_url" >/dev/null 2>&1 || true
+  git fetch --tags --force >/dev/null 2>&1 || true
+  git fetch --all --prune >/dev/null 2>&1 || true
+  git checkout -f "$ref" >/dev/null 2>&1 || {
+    echo "ERROR: Failed to checkout ref '$ref' in $target_dir" >&2
+    popd >/dev/null
+    return 1
+  }
+  popd >/dev/null
+}
+
+# PUBLIC_INTERFACE
+ensure_l1_workflow_repos_present() {
+  # Clone any repos required by the L1-tests workflow (excluding entservices-testframework).
+  #
+  # Mirrors .github/workflows/L1-tests.yml:
+  #   - Thunder                 rdkcentral/Thunder              ref: env.THUNDER_REF (default R4.4.1)
+  #   - ThunderTools            rdkcentral/ThunderTools         ref: R4.4.3
+  #   - entservices-apis        rdkcentral/entservices-apis     ref: env.INTERFACES_REF (default develop)
+  #   - googletest              google/googletest              ref: v1.15.0
+  #   - trower-base64           xmidt-org/trower-base64         (no ref pinned in workflow; default branch)
+  #
+  # NOTE: entservices-testframework is intentionally NOT cloned here (per request).
+  local workspace="${1:?workspace required}"
+
+  local thunder_ref="${THUNDER_REF:-R4.4.1}"
+  local interfaces_ref="${INTERFACES_REF:-develop}"
+  local thundertools_ref="${THUNDERTOOLS_EXPECTED_REF:-R4.4.3}"
+  local googletest_ref="${GOOGLETEST_REF:-v1.15.0}"
+  local trower_ref="${TROWER_BASE64_REF:-}"
+
+  echo "Step: Ensure required repos are present (mirror L1-tests.yml)"
+  ensure_repo_cloned "$workspace/Thunder" "https://github.com/rdkcentral/Thunder.git" "$thunder_ref"
+  ensure_repo_cloned "$workspace/ThunderTools" "https://github.com/rdkcentral/ThunderTools.git" "$thundertools_ref"
+  ensure_repo_cloned "$workspace/entservices-apis" "https://github.com/rdkcentral/entservices-apis.git" "$interfaces_ref"
+  ensure_repo_cloned "$workspace/googletest" "https://github.com/google/googletest.git" "$googletest_ref"
+
+  # Workflow clones without pinning; cloning default branch is sufficient for parity.
+  if [[ -z "$trower_ref" ]]; then
+    if [[ ! -d "$workspace/trower-base64" ]]; then
+      echo "Cloning: https://github.com/xmidt-org/trower-base64.git -> $workspace/trower-base64"
+      git clone https://github.com/xmidt-org/trower-base64.git "$workspace/trower-base64"
+    else
+      echo "Repo exists: $workspace/trower-base64"
+    fi
+  else
+    ensure_repo_cloned "$workspace/trower-base64" "https://github.com/xmidt-org/trower-base64.git" "$trower_ref"
+  fi
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -339,7 +429,8 @@ EOF
 main() {
   # Entry point for the host-shell L1 test workflow.
   #
-  # Applies required patches (idempotently), then builds and runs tests.
+  # First ensures required repos are cloned (excluding entservices-testframework),
+  # then applies required patches (idempotently), then builds and runs tests.
   #
   # Workspace root (expected to contain: entservices-testframework/, ThunderTools/, etc.)
   local workspace
@@ -347,6 +438,9 @@ main() {
   local GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$workspace}"
 
   echo "Workspace: $GITHUB_WORKSPACE"
+
+  # NEW: Mirror the workflow checkouts locally so the rest of the script can patch/build.
+  ensure_l1_workflow_repos_present "$GITHUB_WORKSPACE"
 
   # Ensure ThunderTools is at the right baseline before patching it.
   if [[ -d "$GITHUB_WORKSPACE/ThunderTools" ]]; then
