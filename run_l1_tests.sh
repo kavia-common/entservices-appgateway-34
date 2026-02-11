@@ -153,16 +153,15 @@ ensure_thundertools_expected_revision() {
 
 # PUBLIC_INTERFACE
 run_build_and_l1_tests() {
-  """Build the project and run L1 tests via CMake/CTest.
-
-  Environment:
-    - BUILD_DIR (optional): Out-of-tree build directory. Defaults to "$GITHUB_WORKSPACE/build_l1".
-    - CMAKE_BUILD_TYPE (optional): Defaults to "Debug".
-    - CTEST_PARALLEL_LEVEL (optional): If set, enables parallel ctest execution.
-
-  Returns:
-    0 on success; non-zero on failure.
-  """
+  # Build the project and run L1 tests via CMake/CTest.
+  #
+  # Environment:
+  #   - BUILD_DIR (optional): Out-of-tree build directory. Defaults to "$GITHUB_WORKSPACE/build_l1".
+  #   - CMAKE_BUILD_TYPE (optional): Defaults to "Debug".
+  #   - CTEST_PARALLEL_LEVEL (optional): If set, enables parallel ctest execution.
+  #
+  # Returns:
+  #   0 on success; non-zero on failure.
   local workspace="${1:?workspace required}"
   local build_dir="${BUILD_DIR:-$workspace/build_l1}"
   local build_type="${CMAKE_BUILD_TYPE:-Debug}"
@@ -192,10 +191,10 @@ run_build_and_l1_tests() {
 
 # PUBLIC_INTERFACE
 main() {
-  """Entry point for the host-shell L1 test workflow.
-
-  Applies required patches (idempotently), then builds and runs tests.
-  """
+  # Entry point for the host-shell L1 test workflow.
+  #
+  # Applies required patches (idempotently), then builds and runs tests.
+  #
   # Workspace root (expected to contain: entservices-testframework/, ThunderTools/, etc.)
   local workspace
   workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
