@@ -165,6 +165,17 @@ run_build_and_l1_tests() {
   #                         (This avoids apt/lock/permission failures breaking the test workflow.)
   #       * 0/false/no/off: never install; skip with prerequisites.
   #       * 1/true/yes/on : explicitly force running build_dependencies.sh (may still fail if apt requires privileges).
+  #   - ENABLE_COVERAGE (optional): If truthy, build with GCC coverage flags and generate lcov/html output.
+  #       * 0/false/no/off (default): normal build, no coverage output.
+  #       * 1/true/yes/on : add coverage flags and generate:
+  #           - <build_dir>/coverage.info
+  #           - <build_dir>/filtered_coverage.info
+  #           - <build_dir>/coverage/index.html
+  #   - COVERAGE_TITLE (optional): HTML report title (default: "entservices-appgateway coverage")
+  #
+  # Notes:
+  #   - Mirrors the intent of .github/workflows/L1-tests.yml "Generate coverage" step.
+  #   - Requires lcov + genhtml to be installed when ENABLE_COVERAGE=1.
   #
   # Returns:
   #   0 on success; non-zero on failure.
@@ -172,6 +183,8 @@ run_build_and_l1_tests() {
   local build_dir="${BUILD_DIR:-$workspace/build_l1}"
   local build_type="${CMAKE_BUILD_TYPE:-Debug}"
   local install_deps="${INSTALL_DEPS:-auto}"
+  local enable_coverage="${ENABLE_COVERAGE:-0}"
+  local coverage_title="${COVERAGE_TITLE:-entservices-appgateway coverage}"
 
   echo "Step: Build dependencies (optional)"
   if [[ -x "$workspace/build_dependencies.sh" ]]; then
@@ -211,6 +224,9 @@ Prerequisites (install these via your base image / CI runner / manual setup):
       libwebsocketpp-dev, protobuf-compiler-grpc, libgrpc-dev, libgrpc++-dev, libunwind-dev,
       libgstreamer1.0-dev, libgstreamer-plugins-base1.0-dev
   - python package: jsonref (pip install jsonref)
+
+For coverage (optional):
+  - lcov (provides lcov + genhtml)
 EOF
         ;;
       *)
@@ -228,10 +244,38 @@ EOF
     export CMAKE_PREFIX_PATH="${workspace}/install/usr${CMAKE_PREFIX_PATH:+:${CMAKE_PREFIX_PATH}}"
   fi
 
+  # Coverage compiler flags (keep deliberately close to CI workflow).
+  local cmake_cxx_flags=""
+  case "${enable_coverage,,}" in
+    1|true|yes|on)
+      echo "INFO: Coverage enabled (ENABLE_COVERAGE=$enable_coverage)"
+      cmake_cxx_flags=$(
+        cat <<EOF
+-fprofile-arcs
+-ftest-coverage
+--coverage
+EOF
+      )
+      ;;
+    0|false|no|off|"")
+      ;;
+    *)
+      echo "ERROR: Unknown ENABLE_COVERAGE value: '$enable_coverage' (expected 0|1|true|false...)" >&2
+      return 2
+      ;;
+  esac
+
   echo "Step: Configure CMake ($build_type) -> $build_dir"
-  cmake -S "$workspace" -B "$build_dir" \
-    -DCMAKE_BUILD_TYPE="$build_type" \
-    -DRDK_SERVICES_L1_TEST=ON
+  if [[ -n "$cmake_cxx_flags" ]]; then
+    cmake -S "$workspace" -B "$build_dir" \
+      -DCMAKE_BUILD_TYPE="$build_type" \
+      -DRDK_SERVICES_L1_TEST=ON \
+      -DCMAKE_CXX_FLAGS="$cmake_cxx_flags"
+  else
+    cmake -S "$workspace" -B "$build_dir" \
+      -DCMAKE_BUILD_TYPE="$build_type" \
+      -DRDK_SERVICES_L1_TEST=ON
+  fi
 
   echo "Step: Build"
   cmake --build "$build_dir" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
@@ -239,6 +283,52 @@ EOF
   echo "Step: Run L1 tests (ctest)"
   # Let CI decide parallelism via CTEST_PARALLEL_LEVEL if desired.
   ctest --test-dir "$build_dir" --output-on-failure
+
+  # Generate coverage reports (optional).
+  if [[ -n "$cmake_cxx_flags" ]]; then
+    echo "Step: Generate coverage (lcov + genhtml) -> $build_dir/coverage/"
+    if ! command -v lcov >/dev/null 2>&1; then
+      echo "ERROR: ENABLE_COVERAGE=1 but 'lcov' was not found on PATH." >&2
+      echo "  Install it (Ubuntu): sudo apt-get update && sudo apt-get install -y lcov" >&2
+      return 1
+    fi
+    if ! command -v genhtml >/dev/null 2>&1; then
+      echo "ERROR: ENABLE_COVERAGE=1 but 'genhtml' was not found on PATH." >&2
+      echo "  Install it (Ubuntu): sudo apt-get update && sudo apt-get install -y lcov" >&2
+      return 1
+    fi
+
+    # Copy workflow's lcov config if present.
+    local lcovrc_src="$workspace/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
+    if [[ -f "$lcovrc_src" ]]; then
+      cp "$lcovrc_src" "${HOME}/.lcovrc"
+    fi
+
+    pushd "$workspace" >/dev/null
+
+    # Collect coverage only for the appgateway build dir to match CI.
+    lcov -c -o "$build_dir/coverage.info" -d "$build_dir"
+
+    # Filter coverage similarly to CI workflow patterns (remove system headers, deps, mocks/tests, Thunder).
+    lcov -r "$build_dir/coverage.info" \
+      '/usr/include/*' \
+      '*/_deps/*' \
+      '*/install/usr/include/*' \
+      '*/Tests/headers/*' \
+      '*/Tests/mocks/*' \
+      '*/Tests/L1Tests/tests/*' \
+      '*/Thunder/*' \
+      -o "$build_dir/filtered_coverage.info"
+
+    genhtml -o "$build_dir/coverage" -t "$coverage_title" "$build_dir/filtered_coverage.info"
+
+    echo "Coverage artifacts:"
+    echo "  - $build_dir/coverage.info"
+    echo "  - $build_dir/filtered_coverage.info"
+    echo "  - $build_dir/coverage/index.html"
+
+    popd >/dev/null
+  fi
 }
 
 ###############################################################################
