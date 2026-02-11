@@ -12,23 +12,27 @@ set -euo pipefail
 
 # PUBLIC_INTERFACE
 apply_patch_idempotent() {
-  """
-  Apply a unified diff patch idempotently and non-interactively.
-
-  Behavior:
-  - If the patch is already applied: skip cleanly.
-  - If the patch would apply cleanly: apply it.
-  - If the patch is already reversed (i.e., -R would apply): skip cleanly.
-  - Otherwise: fail with a helpful message.
-
-  Args:
-    $1: target_dir (directory to run patch from)
-    $2: strip_level (e.g., 1 for -p1)
-    $3: patch_file (path to patch file)
-  """
+  # Apply a unified diff patch idempotently and non-interactively.
+  #
+  # Behavior:
+  # - If the patch would apply cleanly: apply it.
+  # - If the patch is already applied (i.e., reverse dry-run would apply): skip cleanly.
+  # - Otherwise: fail with a helpful message (do not force; avoid .rej files).
+  #
+  # Args:
+  #   $1: target_dir   (directory to run patch from)
+  #   $2: strip_level  (e.g., 1 for -p1)
+  #   $3: patch_file   (path to patch file)
   local target_dir="${1:?target_dir required}"
   local strip_level="${2:?strip_level required}"
   local patch_file="${3:?patch_file required}"
+
+  # Reject unexpected extra args to avoid accidental shifting mistakes.
+  if [[ $# -ne 3 ]]; then
+    echo "ERROR: apply_patch_idempotent expects exactly 3 args, got $#." >&2
+    echo "  Usage: apply_patch_idempotent <target_dir> <strip_level> <patch_file>" >&2
+    return 2
+  fi
 
   if [[ ! -d "$target_dir" ]]; then
     echo "ERROR: target directory not found: $target_dir" >&2
@@ -38,10 +42,14 @@ apply_patch_idempotent() {
     echo "ERROR: patch file not found: $patch_file" >&2
     return 2
   fi
+  if [[ ! "$strip_level" =~ ^[0-9]+$ ]]; then
+    echo "ERROR: strip_level must be a non-negative integer (e.g., 0, 1, 2). Got: $strip_level" >&2
+    return 2
+  fi
 
   # Non-interactive & .rej-safe approach:
   # 1) Forward dry-run: if it applies cleanly, then apply for real.
-  # 2) Reverse dry-run: if that applies cleanly, patch is already applied (or tree is in reversed state) -> skip.
+  # 2) Reverse dry-run: if that applies cleanly, the patch is already applied -> skip.
   # 3) Otherwise: fail (do NOT use --force; it may create .rej files).
   #
   # Flags:
@@ -49,8 +57,8 @@ apply_patch_idempotent() {
   # --silent     : reduce noise
   # --dry-run    : detection without touching files
   # --binary     : avoid CRLF "Stripping trailing CRs..." normalization behavior/messages
-  # --forward    : in apply step, don't apply reversed patches
-  # -N           : ignore already-applied hunks when applying forward (still non-interactive)
+  # --forward    : when applying, do not apply reversed patches
+  # -N           : when applying, ignore already-applied hunks (keeps it idempotent)
   pushd "$target_dir" >/dev/null
 
   if patch "-p${strip_level}" --dry-run --silent --batch --binary --forward <"$patch_file" >/dev/null 2>&1; then
