@@ -5,6 +5,11 @@
 #  - Ensure ThunderTools is at the expected *clean* revision before applying
 #    entservices-testframework patches (prevents patch mismatch / reverse-detect prompts).
 #  - Apply patches idempotently and non-interactively (no "Assume -R?" prompts).
+#  - Proceed to ThunderTools patching and build/test steps (CMake + ctest).
+#
+# NOTE:
+#  - This script is intended to be EXECUTED, not sourced.
+#  - It is safe to re-run: patches are applied idempotently; build uses an out-of-tree dir.
 
 set -euo pipefail
 
@@ -143,67 +148,127 @@ ensure_thundertools_expected_revision() {
 }
 
 ###############################################################################
+# Build/test helpers
+###############################################################################
+
+# PUBLIC_INTERFACE
+run_build_and_l1_tests() {
+  """Build the project and run L1 tests via CMake/CTest.
+
+  Environment:
+    - BUILD_DIR (optional): Out-of-tree build directory. Defaults to "$GITHUB_WORKSPACE/build_l1".
+    - CMAKE_BUILD_TYPE (optional): Defaults to "Debug".
+    - CTEST_PARALLEL_LEVEL (optional): If set, enables parallel ctest execution.
+
+  Returns:
+    0 on success; non-zero on failure.
+  """
+  local workspace="${1:?workspace required}"
+  local build_dir="${BUILD_DIR:-$workspace/build_l1}"
+  local build_type="${CMAKE_BUILD_TYPE:-Debug}"
+
+  echo "Step: Build dependencies (if script exists)"
+  if [[ -x "$workspace/build_dependencies.sh" ]]; then
+    # Avoid interactive behavior; this script should be non-interactive in CI contexts.
+    "$workspace/build_dependencies.sh"
+  else
+    echo "INFO: build_dependencies.sh not found or not executable; skipping."
+  fi
+
+  echo "Step: Configure CMake ($build_type) -> $build_dir"
+  cmake -S "$workspace" -B "$build_dir" -DCMAKE_BUILD_TYPE="$build_type"
+
+  echo "Step: Build"
+  cmake --build "$build_dir" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+
+  echo "Step: Run L1 tests (ctest)"
+  # Let CI decide parallelism via CTEST_PARALLEL_LEVEL if desired.
+  ctest --test-dir "$build_dir" --output-on-failure
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
-# NOTE: This script is a host-shell translation of the L1 workflow.
-# Update the paths below if your workspace layout differs.
-GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$(pwd)}"
+# PUBLIC_INTERFACE
+main() {
+  """Entry point for the host-shell L1 test workflow.
 
-# Ensure ThunderTools is at the right baseline before patching it.
-if [[ -d "$GITHUB_WORKSPACE/ThunderTools" ]]; then
-  ensure_thundertools_expected_revision "$GITHUB_WORKSPACE"
+  Applies required patches (idempotently), then builds and runs tests.
+  """
+  # Workspace root (expected to contain: entservices-testframework/, ThunderTools/, etc.)
+  local workspace
+  workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+  local GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$workspace}"
+
+  echo "Workspace: $GITHUB_WORKSPACE"
+
+  # Ensure ThunderTools is at the right baseline before patching it.
+  if [[ -d "$GITHUB_WORKSPACE/ThunderTools" ]]; then
+    ensure_thundertools_expected_revision "$GITHUB_WORKSPACE"
+  else
+    echo "INFO: ThunderTools directory not present; skipping ThunderTools revision pinning."
+  fi
+
+  # Apply entservices-testframework patches idempotently.
+  if [[ -d "$GITHUB_WORKSPACE/ThunderTools" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
+    echo "Step: Apply patches to ThunderTools"
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/ThunderTools" \
+      1 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch"
+  fi
+
+  if [[ -d "$GITHUB_WORKSPACE/Thunder" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
+    echo "Step: Apply patches to Thunder"
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/Thunder" \
+      1 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch"
+
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/Thunder" \
+      1 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/error_code_R4_4.patch"
+
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/Thunder" \
+      1 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/1004-Add-support-for-project-dir.patch"
+
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/Thunder" \
+      1 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/RDKEMW-733-Add-ENTOS-IDS.patch"
+
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/Thunder" \
+      1 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/Jsonrpc_dynamic_error_handling.patch"
+  else
+    echo "INFO: Thunder directory not present; skipping Thunder patch stage."
+  fi
+
+  if [[ -d "$GITHUB_WORKSPACE/entservices-apis" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
+    echo "Step: Apply patches to entservices-apis"
+    # RDKEMW-1007.patch is a git-style patch with "a/" and "b/" prefixes.
+    # When applying from the entservices-apis repo root, the correct strip level is:
+    #   -p0: keeps "b/apis/..." which maps to "./apis/..."
+    apply_patch_idempotent \
+      "$GITHUB_WORKSPACE/entservices-apis" \
+      0 \
+      "$GITHUB_WORKSPACE/entservices-testframework/patches/RDKEMW-1007.patch"
+  fi
+
+  echo "Patch application stage completed (idempotent). Proceeding to build/test..."
+
+  run_build_and_l1_tests "$GITHUB_WORKSPACE"
+
+  echo "L1 workflow completed successfully."
+}
+
+# If the script is sourced, do not run main(). This avoids accidental double-execution.
+# shellcheck disable=SC1090
+if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
+  main "$@"
 fi
-
-# Apply entservices-testframework patches idempotently.
-if [[ -d "$GITHUB_WORKSPACE/ThunderTools" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
-  echo "Step: Apply patches to ThunderTools"
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/ThunderTools" \
-    1 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch"
-fi
-
-if [[ -d "$GITHUB_WORKSPACE/Thunder" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
-  echo "Step: Apply patches to Thunder"
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/Thunder" \
-    1 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch"
-
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/Thunder" \
-    1 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/error_code_R4_4.patch"
-
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/Thunder" \
-    1 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/1004-Add-support-for-project-dir.patch"
-
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/Thunder" \
-    1 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/RDKEMW-733-Add-ENTOS-IDS.patch"
-
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/Thunder" \
-    1 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/Jsonrpc_dynamic_error_handling.patch"
-fi
-
-if [[ -d "$GITHUB_WORKSPACE/entservices-apis" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
-  echo "Step: Apply patches to entservices-apis"
-  # RDKEMW-1007.patch is a git-style patch with "a/" and "b/" prefixes.
-  # When applying from the entservices-apis repo root, the correct strip level is:
-  #   -p0: keeps "b/apis/..." which maps to "./apis/..."
-  # Using -p1 would incorrectly map to "./apis/..." (missing the apis/ prefix in the patch path)
-  # and causes patch(1) to report that it would create files that already exist.
-  apply_patch_idempotent \
-    "$GITHUB_WORKSPACE/entservices-apis" \
-    0 \
-    "$GITHUB_WORKSPACE/entservices-testframework/patches/RDKEMW-1007.patch"
-fi
-
-# The remainder of the original run_l1_tests.sh (build/test steps) should follow here.
-echo "Patch application stage completed (idempotent)."
