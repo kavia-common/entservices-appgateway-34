@@ -194,9 +194,14 @@ fi
 
 if [[ -d "$GITHUB_WORKSPACE/entservices-apis" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
   echo "Step: Apply patches to entservices-apis"
+  # RDKEMW-1007.patch is a git-style patch with "a/" and "b/" prefixes.
+  # When applying from the entservices-apis repo root, the correct strip level is:
+  #   -p0: keeps "b/apis/..." which maps to "./apis/..."
+  # Using -p1 would incorrectly map to "./apis/..." (missing the apis/ prefix in the patch path)
+  # and causes patch(1) to report that it would create files that already exist.
   apply_patch_idempotent \
     "$GITHUB_WORKSPACE/entservices-apis" \
-    1 \
+    0 \
     "$GITHUB_WORKSPACE/entservices-testframework/patches/RDKEMW-1007.patch"
 fi
 
