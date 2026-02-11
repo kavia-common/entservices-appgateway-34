@@ -25,6 +25,10 @@ project(entservices-appgateway LANGUAGES C CXX)
 # are located in the cmake directory. Include it in the search.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
+# Make repo-bundled WPEFramework/Thunder "tooling" find-modules available (e.g. FindConfigGenerator.cmake).
+# L1/L2 test CMakeLists call `write_config()` which is defined by FindConfigGenerator.cmake.
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/install/tools/cmake")
+
 # Host-shell / CI convenience:
 # Prefer the repo-bundled WPEFramework CMake package when available (install/usr/lib/cmake/WPEFramework/...)
 # This makes `find_package(WPEFramework)
@@ -51,6 +55,9 @@ endif()
 
 # for writing pc and config files (provided by WPEFramework under .../common)
 include(CmakeHelperFunctions)
+
+# Provides the `write_config()` CMake function used by Tests/L1Tests and the testframework.
+find_package(ConfigGenerator REQUIRED)
 
 if(RDK_SERVICE_L2_TEST)
     add_subdirectory(Tests/L2Tests)
