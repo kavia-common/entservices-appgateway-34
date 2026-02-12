@@ -74,6 +74,31 @@ require_cmd() {
 }
 
 # PUBLIC_INTERFACE
+detect_cmake_generator() {
+  # Detect a working CMake generator for local builds.
+  #
+  # Preference order:
+  #   1) If CMAKE_GENERATOR is explicitly set by the user, keep it.
+  #   2) If ninja is available, use "Ninja".
+  #   3) Otherwise, fall back to "Unix Makefiles".
+  #
+  # This keeps the rest of the script flow unchanged while avoiding a hard
+  # dependency on ninja for environments that only have make installed.
+  if [[ -n "${CMAKE_GENERATOR:-}" ]]; then
+    log "CMake generator set by user: ${CMAKE_GENERATOR}"
+    return 0
+  fi
+
+  if command -v ninja >/dev/null 2>&1; then
+    export CMAKE_GENERATOR="Ninja"
+  else
+    export CMAKE_GENERATOR="Unix Makefiles"
+  fi
+
+  log "Auto-selected CMake generator: ${CMAKE_GENERATOR}"
+}
+
+# PUBLIC_INTERFACE
 cmake_configure_build_install() {
   # Configure, build and install a CMake project.
   local src_dir="${1:?src_dir required}"
@@ -342,12 +367,12 @@ build_all() {
   local workspace="${1:?workspace required}"
   local build_type="${BUILD_TYPE:-Debug}"
   local toolchain="${TOOLCHAIN_FILE:-}"
-  local generator="${CMAKE_GENERATOR:-Ninja}"
 
-  export CMAKE_GENERATOR="$generator"
+  # Pick a generator (Ninja if present, else Unix Makefiles) unless user set one.
+  detect_cmake_generator
+  local generator="${CMAKE_GENERATOR}"
 
   require_cmd cmake
-  require_cmd ninja
   require_cmd patch
   require_cmd git
 
@@ -621,7 +646,8 @@ main() {
   export ENABLE_VALGRIND="${ENABLE_VALGRIND:-0}"
   export ENABLE_COVERAGE="${ENABLE_COVERAGE:-1}"
   export BUILD_TYPE="${BUILD_TYPE:-Debug}"
-  export CMAKE_GENERATOR="${CMAKE_GENERATOR:-Ninja}"
+  # Do not force a default generator here; we'll auto-detect later (or honor user-provided CMAKE_GENERATOR).
+  export CMAKE_GENERATOR="${CMAKE_GENERATOR:-}"
 
   while [[ $# -gt 0 ]]; do
     case "$1" in
@@ -658,6 +684,9 @@ main() {
   require_cmd git
   require_cmd patch
   require_cmd cmake
+
+  # Choose a CMake generator for the build steps (unless user set one).
+  detect_cmake_generator
 
   # Optional steps mirroring CI
   install_packages_if_enabled
