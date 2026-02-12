@@ -30,7 +30,7 @@ err() { echo "ERROR: $*" >&2; }
 
 # PUBLIC_INTERFACE
 usage() {
-  """Print usage information for this script."""
+  # Print usage information for this script.
   cat <<'USAGE'
 run_l1_tests.sh [--no-build] [--no-test] [--no-coverage] [--with-valgrind] [--setup-files] [--install-packages] [--build-type <Debug|Release>]
 
@@ -65,7 +65,7 @@ USAGE
 
 # PUBLIC_INTERFACE
 require_cmd() {
-  """Ensure a required command exists on PATH."""
+  # Ensure a required command exists on PATH.
   local cmd="${1:?cmd required}"
   if ! command -v "$cmd" >/dev/null 2>&1; then
     err "Missing required command: $cmd"
@@ -75,7 +75,7 @@ require_cmd() {
 
 # PUBLIC_INTERFACE
 cmake_configure_build_install() {
-  """Configure, build and install a CMake project."""
+  # Configure, build and install a CMake project.
   local src_dir="${1:?src_dir required}"
   local build_dir="${2:?build_dir required}"
   local install_prefix="${3:?install_prefix required}"
@@ -207,7 +207,7 @@ apply_patches_thunder() {
 
 # PUBLIC_INTERFACE
 install_packages_if_enabled() {
-  """Optionally install packages used by CI. Disabled by default."""
+  # Optionally install packages used by CI. Disabled by default.
   if [[ "${ENABLE_PACKAGE_INSTALL:-0}" != "1" ]]; then
     return 0
   fi
@@ -222,7 +222,7 @@ install_packages_if_enabled() {
 
 # PUBLIC_INTERFACE
 build_and_install_trower_base64() {
-  """Build and install trower-base64 as CI does (meson+ninja)."""
+  # Build and install trower-base64 as CI does (meson+ninja).
   local workspace="${1:?workspace required}"
   require_cmd meson
   require_cmd ninja
@@ -237,7 +237,7 @@ build_and_install_trower_base64() {
 
 # PUBLIC_INTERFACE
 setup_files_if_enabled() {
-  """Optionally create CI-like paths and device nodes. Disabled by default."""
+  # Optionally create CI-like paths and device nodes. Disabled by default.
   if [[ "${ENABLE_SETUP_FILES:-0}" != "1" ]]; then
     return 0
   fi
@@ -326,7 +326,7 @@ setup_files_if_enabled() {
 
 # PUBLIC_INTERFACE
 generate_external_headers() {
-  """Generate empty headers to mute errors, matching CI step."""
+  # Generate empty headers to mute errors, matching CI step.
   local workspace="${1:?workspace required}"
   log "Step: Generate external headers"
   mkdir -p "$workspace/entservices-testframework/Tests/headers/headers/network" \
@@ -338,7 +338,7 @@ generate_external_headers() {
 
 # PUBLIC_INTERFACE
 build_all() {
-  """Build dependencies and targets required for L1 tests."""
+  # Build dependencies and targets required for L1 tests.
   local workspace="${1:?workspace required}"
   local build_type="${BUILD_TYPE:-Debug}"
   local toolchain="${TOOLCHAIN_FILE:-}"
@@ -508,7 +508,7 @@ ${coverage_flags[*]}
 
 # PUBLIC_INTERFACE
 run_tests() {
-  """Run RdkServicesL1Test similarly to CI (optionally with valgrind)."""
+  # Run RdkServicesL1Test similarly to CI (optionally with valgrind).
   local workspace="${1:?workspace required}"
   local install_usr="$workspace/install/usr"
 
@@ -565,7 +565,7 @@ run_tests() {
 
 # PUBLIC_INTERFACE
 generate_coverage() {
-  """Generate lcov + genhtml report as CI does, outputting ./coverage/."""
+  # Generate lcov + genhtml report as CI does, outputting ./coverage/.
   local workspace="${1:?workspace required}"
 
   if [[ "${ENABLE_COVERAGE:-1}" != "1" ]]; then
@@ -610,7 +610,7 @@ generate_coverage() {
 
 # PUBLIC_INTERFACE
 main() {
-  """Entry point for local L1 build/test/coverage runner."""
+  # Entry point for local L1 build/test/coverage runner.
   local do_build=1
   local do_test=1
   local do_cov=1
