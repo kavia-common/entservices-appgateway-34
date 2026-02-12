@@ -1,15 +1,16 @@
 #!/usr/bin/env bash
 # L1 test runner script (host-shell)
 #
-# This script intentionally mirrors the CI workflow for the specific parts that
-# have been flaky locally:
-#   - ThunderTools checkout/ref
-#   - ThunderTools patch application
+# This script intentionally mirrors the CI workflow for the parts that must be
+# identical between local runs and GitHub Actions:
+#   - Repo checkouts (Thunder/ThunderTools/entservices-apis/googletest/trower-base64)
+#   - Patch application (ThunderTools + Thunder) exactly as .github/workflows/L1-tests.yml
 #
 # CI reference: .github/workflows/L1-tests.yml
 #
 # NOTE:
 #  - This script is intended to be EXECUTED, not sourced.
+#  - Some steps require sudo (package installs, /dev nodes, etc.) depending on your env.
 
 set -euo pipefail
 
@@ -32,9 +33,8 @@ ensure_repo_cloned() {
   local remote_url="${2:?remote_url required}"
   local ref="${3:?ref required}"
 
-  # Some CI/workspaces can leave behind a directory named like the repo but without git metadata
-  # (e.g., extracted tarball, empty dir, partial checkout). For parity with the workflow we
-  # remove and re-clone in that case.
+  # CI/workspaces can leave behind a directory named like the repo but without git metadata.
+  # For parity with the workflow we remove and re-clone in that case.
   if [[ -d "$target_dir" && ! -d "$target_dir/.git" ]]; then
     echo "INFO: Path exists but is not a git repo; removing so it can be re-cloned: $target_dir" >&2
     rm -rf "$target_dir"
@@ -68,7 +68,7 @@ ensure_repo_cloned() {
 
 # PUBLIC_INTERFACE
 ensure_l1_workflow_repos_present() {
-  # Clone any repos required by the L1-tests workflow (excluding entservices-testframework).
+  # Clone repos required by the L1-tests workflow (excluding entservices-testframework).
   #
   # Mirrors .github/workflows/L1-tests.yml:
   #   - Thunder                 rdkcentral/Thunder              ref: env.THUNDER_REF (default R4.4.1)
@@ -99,6 +99,55 @@ ensure_l1_workflow_repos_present() {
 }
 
 ###############################################################################
+# Patch steps (mirror .github/workflows/L1-tests.yml)
+###############################################################################
+
+# PUBLIC_INTERFACE
+apply_patches_thundertools() {
+  # Apply ThunderTools patch exactly as CI does.
+  local workspace="${1:?workspace required}"
+
+  # CI:
+  #   cd $GITHUB_WORKSPACE/ThunderTools
+  #   patch -p1 < $GITHUB_WORKSPACE/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch
+  if [[ -d "$workspace/ThunderTools" && -d "$workspace/entservices-testframework" ]]; then
+    echo "Step: Apply patches ThunderTools (match L1-tests.yml)"
+    pushd "$workspace/ThunderTools" >/dev/null
+    patch -p1 <"$workspace/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch"
+    popd >/dev/null
+  else
+    echo "INFO: ThunderTools or entservices-testframework missing; skipping ThunderTools patch step."
+  fi
+}
+
+# PUBLIC_INTERFACE
+apply_patches_thunder() {
+  # Apply Thunder patches exactly as CI does (same order, same patch files).
+  local workspace="${1:?workspace required}"
+
+  # CI:
+  #   cd $GITHUB_WORKSPACE/Thunder
+  #   patch -p1 < .../Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch
+  #   patch -p1 < .../error_code_R4_4.patch
+  #   patch -p1 < .../1004-Add-support-for-project-dir.patch
+  #   patch -p1 < .../RDKEMW-733-Add-ENTOS-IDS.patch
+  #   patch -p1 < .../Jsonrpc_dynamic_error_handling.patch
+  #   cd -
+  if [[ -d "$workspace/Thunder" && -d "$workspace/entservices-testframework" ]]; then
+    echo "Step: Apply patches Thunder (match L1-tests.yml)"
+    pushd "$workspace/Thunder" >/dev/null
+    patch -p1 <"$workspace/entservices-testframework/patches/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch"
+    patch -p1 <"$workspace/entservices-testframework/patches/error_code_R4_4.patch"
+    patch -p1 <"$workspace/entservices-testframework/patches/1004-Add-support-for-project-dir.patch"
+    patch -p1 <"$workspace/entservices-testframework/patches/RDKEMW-733-Add-ENTOS-IDS.patch"
+    patch -p1 <"$workspace/entservices-testframework/patches/Jsonrpc_dynamic_error_handling.patch"
+    popd >/dev/null
+  else
+    echo "INFO: Thunder or entservices-testframework missing; skipping Thunder patch step."
+  fi
+}
+
+###############################################################################
 # Main
 ###############################################################################
 
@@ -106,9 +155,11 @@ ensure_l1_workflow_repos_present() {
 main() {
   # Entry point for the host-shell L1 test workflow.
   #
-  # For this task we only guarantee parity with CI for:
-  #   - ThunderTools checkout/ref
-  #   - ThunderTools patch application
+  # This script now:
+  #   1) Ensures required repos are present
+  #   2) Applies ThunderTools patches (as CI)
+  #   3) Applies Thunder patches (as CI)
+  #   4) Continues to the remaining build/test steps (existing flow)
   local workspace
   workspace="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
   local GITHUB_WORKSPACE="${GITHUB_WORKSPACE:-$workspace}"
@@ -117,19 +168,12 @@ main() {
 
   ensure_l1_workflow_repos_present "$GITHUB_WORKSPACE"
 
-  # CI: "Apply patches ThunderTools"
-  #   cd $GITHUB_WORKSPACE/ThunderTools
-  #   patch -p1 < $GITHUB_WORKSPACE/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch
-  if [[ -d "$GITHUB_WORKSPACE/ThunderTools" && -d "$GITHUB_WORKSPACE/entservices-testframework" ]]; then
-    echo "Step: Apply patches ThunderTools (match L1-tests.yml)"
-    pushd "$GITHUB_WORKSPACE/ThunderTools" >/dev/null
-    patch -p1 <"$GITHUB_WORKSPACE/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch"
-    popd >/dev/null
-  else
-    echo "INFO: ThunderTools or entservices-testframework missing; skipping ThunderTools patch step."
-  fi
+  apply_patches_thundertools "$GITHUB_WORKSPACE"
+  apply_patches_thunder "$GITHUB_WORKSPACE"
 
-  echo "NOTE: Remaining build/test steps are not modified by this change."
+  # Continue with the rest of the existing script/flow (build/test steps).
+  # If you have additional build/test logic below in your local variant, keep it here.
+  echo "Continuing to remaining build/test steps..."
 }
 
 if [[ "${BASH_SOURCE[0]}" == "$0" ]]; then
