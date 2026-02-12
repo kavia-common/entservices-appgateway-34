@@ -362,6 +362,42 @@ generate_external_headers() {
 }
 
 # PUBLIC_INTERFACE
+build_thunder() {
+  # Configure and build Thunder in a dedicated step, printing the build output path.
+  #
+  # This is intentionally separate from build_all() so the runner's output clearly
+  # shows Thunder being configured/built, and so users can locate Thunder build
+  # artifacts quickly.
+  local workspace="${1:?workspace required}"
+  local build_type="${BUILD_TYPE:-Debug}"
+  local toolchain="${TOOLCHAIN_FILE:-}"
+
+  detect_cmake_generator
+  require_cmd cmake
+
+  local install_prefix="$workspace/install/usr"
+  mkdir -p "$install_prefix"
+
+  local thunder_build_dir="$workspace/build/Thunder"
+  log "Thunder build directory: $thunder_build_dir"
+
+  cmake -G "${CMAKE_GENERATOR:-Ninja}" \
+    -S "$workspace/Thunder" \
+    -B "$thunder_build_dir" \
+    -DCMAKE_INSTALL_PREFIX="$install_prefix" \
+    -DCMAKE_MODULE_PATH="$install_prefix/../tools/cmake" \
+    -DGENERIC_CMAKE_MODULE_PATH="$install_prefix/../tools/cmake" \
+    -DMESSAGING=ON \
+    -DBUILD_TYPE="$build_type" \
+    -DBINDING=127.0.0.1 \
+    -DPORT=55555 \
+    -DEXCEPTIONS_ENABLE=ON \
+    ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"}
+
+  cmake --build "$thunder_build_dir" -j"$(nproc)"
+}
+
+# PUBLIC_INTERFACE
 build_all() {
   # Build dependencies and targets required for L1 tests.
   local workspace="${1:?workspace required}"
@@ -714,6 +750,8 @@ main() {
   setup_files_if_enabled
 
   if [[ "$do_build" == "1" ]]; then
+    log "Step: Configure/build Thunder (dedicated step)"
+    build_thunder "$GITHUB_WORKSPACE"
     build_all "$GITHUB_WORKSPACE"
   else
     log "Build disabled (--no-build)"
