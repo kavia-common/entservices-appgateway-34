@@ -49,7 +49,7 @@ err() { echo "ERROR: $*" >&2; }
 usage() {
   # Print usage information for this script.
   cat <<'USAGE'
-run_l1_tests.sh [--no-build] [--no-test] [--no-coverage] [--with-valgrind] [--setup-files] [--install-packages] [--build-type <Debug|Release>]
+run_l1_tests.sh [--no-build] [--no-test] [--no-coverage] [--with-valgrind] [--setup-files] [--install-packages] [--build-type <Debug|Release>] [--full-deps]
 
 Environment variables:
   GITHUB_WORKSPACE             Workspace root (default: script directory)
@@ -64,6 +64,17 @@ Environment variables:
   ENABLE_SETUP_FILES            If "1", attempt to create CI-like filesystem nodes (default: 0)
   ENABLE_VALGRIND               If "1", run valgrind pass (default: 0)
   ENABLE_COVERAGE               If "1", generate lcov+genhtml report (default: 1)
+
+  # Minimal/full dependency controls (minimal is default)
+  MINIMAL_L1                    If "1" (default), build/run only what is required for AppGateway
+                                L1 coverage (AppGateway + L1 tests + coverage), skipping mocks and
+                                entservices-testframework build/install.
+                                If "0", attempt a fuller CI-like dependency build.
+  ENABLE_FETCH_DEPS             If "1", allow cloning/updating external repos from network.
+                                Default: 0 (use repos already present in the workspace).
+  ENABLE_BUILD_MOCKS            If "1", attempt to build testframework mocks (may require system deps
+                                like gstreamer/libdrm/curl). Default: 0.
+  ENABLE_BUILD_TESTFRAMEWORK    If "1", build/install entservices-testframework. Default: 0.
 
   CMAKE_GENERATOR               CMake generator (default: Ninja)
 
@@ -620,20 +631,18 @@ build_all() {
   #     #include <interfaces/IAppManager.h>
   #     #include <interfaces/entservices_errorcodes.h>
   #
-  #   Those headers are provided by the *installed* Thunder (WPEFramework) prefix under:
-  #     <prefix>/include/WPEFramework/interfaces/...
+  #   Those headers live under:
+  #     <thunder-prefix>/include/WPEFramework/interfaces/...
   #
-  #   If we don't point CMake at the Thunder install prefix, the build fails with:
-  #     fatal error: interfaces/IAppManager.h: No such file or directory
+  #   Therefore the compiler needs this include root (directory, not file):
+  #     -I<thunder-prefix>/include/WPEFramework
   #
-  #   Additionally, previous builds have shown lots of:
+  #   Previous failing builds showed warnings like:
   #     cc1plus: warning: .../entservices-apis/apis/Module.cpp: not a directory
-  #   which happens when file paths accidentally end up in -I include-dir lists.
+  #   which indicates file paths accidentally ended up in include-dir lists.
   #
-  #   So here we:
-  #     1) Force config-mode discovery of WPEFramework via WPEFramework_DIR
-  #     2) Ensure CMAKE_PREFIX_PATH includes the Thunder install prefix
-  #     3) Provide explicit include roots for installed Thunder headers
+  #   To prevent stale/bad include flags from persisting, we *always* clean the
+  #   entservices-apis build dir before reconfiguring.
   log "Step: Build entservices-apis"
 
   # Thunder install prefix (may be separate from install/usr)
@@ -650,11 +659,31 @@ build_all() {
   export CMAKE_PREFIX_PATH="${thunder_install_prefix_local}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
   export WPEFramework_DIR="$thunder_wpeframework_dir_local"
 
-  # These are the include roots that ultimately provide <interfaces/...>:
-  #   <prefix>/include/WPEFramework/interfaces
-  # so the compiler must have <prefix>/include/WPEFramework on its include path.
+  # Correct include roots for resolving <interfaces/...> are:
+  #   - Thunder (WPEFramework) interfaces:
+  #       <thunder-prefix>/include/WPEFramework/interfaces/...
+  #     so we must add:
+  #       -I<thunder-prefix>/include/WPEFramework
+  #
+  #   - entservices-apis generated/installed interfaces (e.g. entservices_errorcodes.h):
+  #       <install-prefix>/include/WPEFramework/interfaces/...
+  #     so we must also add:
+  #       -I<install-prefix>/include/WPEFramework
+  #
+  # Note:
+  #   Passing CMAKE_INCLUDE_PATH did not reliably propagate into the actual target
+  #   include dirs for this project (as observed from generated flags.make). To
+  #   make this deterministic, we explicitly inject the include roots via compiler
+  #   flags for the entservices-apis build.
   local thunder_include_root="$thunder_install_prefix_local/include"
   local thunder_wpeframework_include="$thunder_include_root/WPEFramework"
+
+  local install_include_root="$install_prefix/include"
+  local install_wpeframework_include="$install_include_root/WPEFramework"
+
+  # Clean & reconfigure to ensure we don't reuse a cached configuration that
+  # injected file paths as include directories.
+  rm -rf "$workspace/build/entservices-apis"
 
   cmake_configure_build_install \
     "$workspace/entservices-apis" \
@@ -664,19 +693,30 @@ build_all() {
     -DEXCEPTIONS_ENABLE=ON \
     -DWPEFramework_DIR="$thunder_wpeframework_dir_local" \
     -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
-    -DCMAKE_INCLUDE_PATH="$thunder_wpeframework_include;$thunder_include_root"
+    -DCMAKE_CXX_FLAGS="-I$thunder_wpeframework_include -I$install_wpeframework_include" \
+    -DCMAKE_C_FLAGS="-I$thunder_wpeframework_include -I$install_wpeframework_include"
 
   # googletest
+  #
+  # NOTE:
+  #   In some sandboxed/overlay environments, `cmake --install` fails with:
+  #     file INSTALL cannot set permissions on ".../install/usr/include": Operation not permitted
+  #   even when the directory is writable.
+  #
+  #   The L1 build does not require googletest headers/libs to be installed into the shared
+  #   prefix; it is sufficient to build it and link against build outputs as needed.
   log "Step: Build googletest"
-  cmake_configure_build_install \
-    "$workspace/googletest" \
-    "$workspace/build/googletest" \
-    "$install_prefix" \
-    "$cmake_module_path_for_rest" \
+  cmake -G "${CMAKE_GENERATOR:-Ninja}" \
+    -S "$workspace/googletest" \
+    -B "$workspace/build/googletest" \
+    -DCMAKE_INSTALL_PREFIX="$install_prefix" \
+    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
+    -DGENERIC_CMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
     -DBUILD_TYPE="$build_type" \
     -DBUILD_GMOCK=ON \
     -DBUILD_SHARED_LIBS=OFF \
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+  cmake --build "$workspace/build/googletest" -j"$(nproc)"
 
   # headers (needed before mocks/appgateway/testframework builds)
   generate_external_headers "$workspace"
@@ -742,60 +782,132 @@ build_all() {
     "--coverage"
   )
 
-  # mocks
-  log "Step: Build mocks"
-  cmake -S "$workspace/entservices-testframework/Tests/mocks" \
-    -B "$workspace/build/mocks" \
-    -DBUILD_SHARED_LIBS=ON \
-    -DRDK_SERVICES_L1_TEST=ON \
-    -DUSE_THUNDER_R4=ON \
-    ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
-    -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
-    -DCMAKE_BUILD_TYPE="$build_type" \
-    -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
-    -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
-    -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink -Wl,-wrap,v_secure_system -Wl,-wrap,pclose -Wl,-wrap,setmntent -Wl,-wrap,getmntent"
-  cmake --build "$workspace/build/mocks" -j"$(nproc)"
-  cmake --install "$workspace/build/mocks"
+  # mocks (optional)
+  #
+  # Minimal L1 coverage for AppGateway should not require the full testframework mocks
+  # (they pull in system dependencies like gstreamer/libdrm/curl on many hosts).
+  # Keep this step behind an explicit toggle.
+  if [[ "${ENABLE_BUILD_MOCKS:-0}" == "1" ]]; then
+    log "Step: Build mocks (ENABLE_BUILD_MOCKS=1)"
 
-  # entservices-appgateway
-  log "Step: Build entservices-appgateway"
-  cmake -G "$generator" \
-    -S "$workspace/entservices-appgateway" \
-    -B "$workspace/build/entservices-appgateway" \
-    -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
-    -DCMAKE_BUILD_TYPE="$build_type" \
-    -DRDK_SERVICES_L1_TEST=ON \
-    -DUSE_THUNDER_R4=ON \
-    -DHIDE_NON_EXTERNAL_SYMBOLS=OFF \
-    -DENABLE_UNIT_TESTS=ON \
-    ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
-    -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
-    -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
-    -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h -include $workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink"
-  cmake --build "$workspace/build/entservices-appgateway" -j"$(nproc)"
-  cmake --install "$workspace/build/entservices-appgateway"
+    local enable_protobuf_mocks="ON"
+    if ! command -v protoc >/dev/null 2>&1; then
+      warn "protoc not found; disabling Protobuf-dependent mocks for this run."
+      enable_protobuf_mocks="OFF"
+    fi
+    if ! command -v grpc_cpp_plugin >/dev/null 2>&1; then
+      warn "grpc_cpp_plugin not found; disabling Protobuf-dependent mocks for this run."
+      enable_protobuf_mocks="OFF"
+    fi
 
-  # entservices-testframework
-  log "Step: Build entservices-testframework"
-  cmake -G "$generator" \
-    -S "$workspace/entservices-testframework" \
-    -B "$workspace/build/entservices-testframework" \
-    -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
-    -DCMAKE_BUILD_TYPE="$build_type" \
-    -DRDK_SERVICES_L1_TEST=ON \
-    -DUSE_THUNDER_R4=ON \
-    -DHIDE_NON_EXTERNAL_SYMBOLS=OFF \
-    -DENABLE_UNIT_TESTS=ON \
-    ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
-    -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
-    -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
-    -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -I ./usr/include/libdrm -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,--no-as-needed"
-  cmake --build "$workspace/build/entservices-testframework" -j"$(nproc)"
-  cmake --install "$workspace/build/entservices-testframework"
+    # Configure/build mocks as best-effort: failure here should not stop AppGateway/L1 flow.
+    set +e
+    cmake -S "$workspace/entservices-testframework/Tests/mocks" \
+      -B "$workspace/build/mocks" \
+      -DBUILD_SHARED_LIBS=ON \
+      -DRDK_SERVICES_L1_TEST=ON \
+      -DUSE_THUNDER_R4=ON \
+      -DENABLE_PROTOBUF_MOCKS="$enable_protobuf_mocks" \
+      ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
+      -DCMAKE_INSTALL_PREFIX="$install_prefix" \
+      -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
+      -DCMAKE_BUILD_TYPE="$build_type" \
+      -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
+      -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
+      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink -Wl,-wrap,v_secure_system -Wl,-wrap,pclose -Wl,-wrap,setmntent -Wl,-wrap,getmntent"
+    local mocks_cfg_rc=$?
+
+    local mocks_build_rc=0
+    local mocks_install_rc=0
+    if [[ $mocks_cfg_rc -eq 0 ]]; then
+      cmake --build "$workspace/build/mocks" -j"$(nproc)"
+      mocks_build_rc=$?
+      if [[ $mocks_build_rc -eq 0 ]]; then
+        cmake --install "$workspace/build/mocks"
+        mocks_install_rc=$?
+      fi
+    fi
+    set -e
+
+    if [[ $mocks_cfg_rc -ne 0 || $mocks_build_rc -ne 0 || $mocks_install_rc -ne 0 ]]; then
+      warn "Mocks step did not complete successfully (cfg=$mocks_cfg_rc build=$mocks_build_rc install=$mocks_install_rc). Continuing with AppGateway/L1 build+tests."
+    fi
+  else
+    log "Skipping mocks build (ENABLE_BUILD_MOCKS=0)."
+  fi
+
+  # AppGateway (this repo)
+  #
+  # IMPORTANT:
+  #   The repository layout in this workspace is:
+  #     AppGateway/, AppGatewayCommon/, AppNotifications/, Tests/, ...
+  #   There is no nested "entservices-appgateway/" subdirectory. Previous runs failed with:
+  #     CMake Error: The source directory ".../entservices-appgateway" does not exist.
+  #
+  #   Build from the repo root so the top-level CMakeLists.txt can include the correct subdirs.
+  log "Step: Build AppGateway (repo root)"
+  local appgateway_src_dir="$workspace"
+  local appgateway_build_dir="$workspace/build/entservices-appgateway"
+
+  # Avoid unnecessary rebuilds: if the build directory is already configured and we've already
+  # installed once, just build (which should be a no-op if everything is up-to-date).
+  #
+  # We use CMake's install stamp as a cheap "this target succeeded before" indicator.
+  local appgateway_install_stamp="$appgateway_build_dir/CMakeFiles/install.stamp"
+  local appgateway_configured=0
+  if [[ -f "$appgateway_build_dir/CMakeCache.txt" ]]; then
+    appgateway_configured=1
+  fi
+
+  if [[ "$appgateway_configured" -ne 1 ]]; then
+    cmake -G "$generator" \
+      -S "$appgateway_src_dir" \
+      -B "$appgateway_build_dir" \
+      -DCMAKE_INSTALL_PREFIX="$install_prefix" \
+      -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
+      -DCMAKE_BUILD_TYPE="$build_type" \
+      -DRDK_SERVICES_L1_TEST=ON \
+      -DUSE_THUNDER_R4=ON \
+      -DHIDE_NON_EXTERNAL_SYMBOLS=OFF \
+      -DENABLE_UNIT_TESTS=ON \
+      ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
+      -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
+      -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
+      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h -include $workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink"
+  else
+    log "AppGateway already configured (found $appgateway_build_dir/CMakeCache.txt); skipping reconfigure."
+  fi
+
+  cmake --build "$appgateway_build_dir" -j"$(nproc)"
+
+  if [[ ! -f "$appgateway_install_stamp" ]]; then
+    cmake --install "$appgateway_build_dir"
+  else
+    log "AppGateway already installed once (found install stamp); skipping reinstall."
+  fi
+
+  # entservices-testframework (optional)
+  if [[ "${ENABLE_BUILD_TESTFRAMEWORK:-0}" == "1" ]]; then
+    log "Step: Build entservices-testframework (ENABLE_BUILD_TESTFRAMEWORK=1)"
+    cmake -G "$generator" \
+      -S "$workspace/entservices-testframework" \
+      -B "$workspace/build/entservices-testframework" \
+      -DCMAKE_INSTALL_PREFIX="$install_prefix" \
+      -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
+      -DCMAKE_BUILD_TYPE="$build_type" \
+      -DRDK_SERVICES_L1_TEST=ON \
+      -DUSE_THUNDER_R4=ON \
+      -DHIDE_NON_EXTERNAL_SYMBOLS=OFF \
+      -DENABLE_UNIT_TESTS=ON \
+      ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
+      -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
+      -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
+      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -I ./usr/include/libdrm -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,--no-as-needed"
+    cmake --build "$workspace/build/entservices-testframework" -j"$(nproc)"
+    cmake --install "$workspace/build/entservices-testframework"
+  else
+    log "Skipping entservices-testframework build/install (ENABLE_BUILD_TESTFRAMEWORK=0)."
+  fi
 }
 
 # PUBLIC_INTERFACE
@@ -933,6 +1045,13 @@ main() {
   export ENABLE_VALGRIND="${ENABLE_VALGRIND:-0}"
   export ENABLE_COVERAGE="${ENABLE_COVERAGE:-1}"
   export BUILD_TYPE="${BUILD_TYPE:-Debug}"
+
+  # Minimal path defaults: no network fetches; skip mocks/testframework unless opted in.
+  export MINIMAL_L1="${MINIMAL_L1:-1}"
+  export ENABLE_FETCH_DEPS="${ENABLE_FETCH_DEPS:-0}"
+  export ENABLE_BUILD_MOCKS="${ENABLE_BUILD_MOCKS:-0}"
+  export ENABLE_BUILD_TESTFRAMEWORK="${ENABLE_BUILD_TESTFRAMEWORK:-0}"
+
   # Do not force a default generator here; we'll auto-detect later (or honor user-provided CMAKE_GENERATOR).
   export CMAKE_GENERATOR="${CMAKE_GENERATOR:-}"
 
@@ -951,6 +1070,13 @@ main() {
       --build-type)
         BUILD_TYPE="${2:?--build-type requires value}"
         shift 2
+        ;;
+      --full-deps)
+        export MINIMAL_L1=0
+        export ENABLE_BUILD_MOCKS=1
+        export ENABLE_BUILD_TESTFRAMEWORK=1
+        export ENABLE_FETCH_DEPS=1
+        shift
         ;;
       *)
         err "Unknown argument: $1"
@@ -978,7 +1104,16 @@ main() {
   # Optional steps mirroring CI
   install_packages_if_enabled
 
-  ensure_l1_workflow_repos_present "$GITHUB_WORKSPACE"
+  if [[ "${ENABLE_FETCH_DEPS:-0}" == "1" ]]; then
+    ensure_l1_workflow_repos_present "$GITHUB_WORKSPACE"
+  else
+    log "Skipping dependency fetch/update (ENABLE_FETCH_DEPS=0). Using repos already present in workspace."
+    for d in Thunder ThunderTools googletest trower-base64 entservices-apis; do
+      if [[ ! -d "$GITHUB_WORKSPACE/$d" ]]; then
+        warn "Missing workspace dependency directory: $GITHUB_WORKSPACE/$d (set ENABLE_FETCH_DEPS=1 or pass --full-deps to fetch)"
+      fi
+    done
+  fi
 
   # trower-base64 install is required in CI; locally it may already exist.
   # If meson/ninja/sudo are available, build it; otherwise warn.
@@ -1003,6 +1138,13 @@ main() {
   if [[ "$do_build" == "1" ]]; then
     log "Step: Configure/build Thunder (dedicated step)"
     build_thunder "$GITHUB_WORKSPACE"
+
+    if [[ "${MINIMAL_L1:-1}" == "1" ]]; then
+      log "Minimal L1 mode enabled (MINIMAL_L1=1): skipping mocks + entservices-testframework build/install unless explicitly enabled."
+      export ENABLE_BUILD_MOCKS="${ENABLE_BUILD_MOCKS:-0}"
+      export ENABLE_BUILD_TESTFRAMEWORK="${ENABLE_BUILD_TESTFRAMEWORK:-0}"
+    fi
+
     build_all "$GITHUB_WORKSPACE"
   else
     log "Build disabled (--no-build)"
