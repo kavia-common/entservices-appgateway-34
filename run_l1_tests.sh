@@ -725,7 +725,13 @@ build_all() {
   cmake --build "$workspace/build/googletest" -j"$(nproc)"
 
   # headers (needed before mocks/appgateway/testframework builds)
-  generate_external_headers "$workspace"
+  # Minimal L1 path should not require entservices-testframework. Only generate
+  # placeholder headers if the testframework tree is present.
+  if [[ -d "$workspace/entservices-testframework/Tests" ]]; then
+    generate_external_headers "$workspace"
+  else
+    warn "entservices-testframework not present; skipping external header generation."
+  fi
 
   # Common flags (mirror CI)
   #
@@ -866,6 +872,21 @@ build_all() {
   fi
 
   if [[ "$appgateway_configured" -ne 1 ]]; then
+    # Optional forced-includes from entservices-testframework mocks.
+    # In minimal mode (or when testframework isn't present), do not add these.
+    local tf_pkg_header="$workspace/entservices-testframework/Tests/mocks/pkg.h"
+    local tf_secure_header="$workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h"
+    local tf_forced_includes=""
+    if [[ -f "$tf_pkg_header" ]]; then
+      tf_forced_includes+=" -include $tf_pkg_header"
+    fi
+    if [[ -f "$tf_secure_header" ]]; then
+      tf_forced_includes+=" -include $tf_secure_header"
+    fi
+    if [[ -z "$tf_forced_includes" ]]; then
+      log "No entservices-testframework mock headers found; building AppGateway without forced mock includes."
+    fi
+
     cmake -G "$generator" \
       -S "$appgateway_src_dir" \
       -B "$appgateway_build_dir" \
@@ -879,7 +900,7 @@ build_all() {
       ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
       -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
       -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
-      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h -include $workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink"
+      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags}${tf_forced_includes} ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink"
   else
     log "AppGateway already configured (found $appgateway_build_dir/CMakeCache.txt); skipping reconfigure."
   fi
