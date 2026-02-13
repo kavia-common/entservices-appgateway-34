@@ -682,15 +682,50 @@ build_all() {
   generate_external_headers "$workspace"
 
   # Common flags (mirror CI)
-  local common_includes=(
-    "-I $workspace/entservices-testframework/Tests/headers"
-    "-I $workspace/entservices-testframework/Tests"
-    "-I $workspace/entservices-appgateway/helpers"
-    "-I $workspace/Thunder/Source"
-    "-I $workspace/Thunder/Source/core"
-    "-I $workspace/install/usr/include"
-    "-I $workspace/install/usr/include/WPEFramework"
+  #
+  # IMPORTANT:
+  # Avoid embedding "-I ..." strings into a multi-line CMAKE_CXX_FLAGS value.
+  # In previous failing runs, that ended up producing invalid include flags
+  # like `-I /path/to/entservices-apis/apis/Module.cpp`, causing:
+  #   cc1plus: warning: ... not a directory
+  #
+  # Keep include dirs as raw directories, and only assemble -I flags as a single
+  # line. Also include Thunder's *installed* include roots so generated code
+  # can resolve headers like:
+  #   #include <interfaces/IAppManager.h>
+  #   #include <interfaces/entservices_errorcodes.h>
+  local thunder_install_prefix_for_builds=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDER_INSTALL_PREFIX) thunder_install_prefix_for_builds="$v" ;;
+    esac
+  done < <(compute_thunder_prefixes "$workspace")
+
+  local thunder_include_root="$thunder_install_prefix_for_builds/include"
+  local thunder_wpeframework_include="$thunder_include_root/WPEFramework"
+
+  # Raw include dirs (no "-I" here).
+  local common_include_dirs=(
+    "$workspace/entservices-testframework/Tests/headers"
+    "$workspace/entservices-testframework/Tests"
+    "$workspace/entservices-appgateway/helpers"
+    "$workspace/Thunder/Source"
+    "$workspace/Thunder/Source/core"
+    "$workspace/install/usr/include"
+    "$workspace/install/usr/include/WPEFramework"
+    "$thunder_include_root"
+    "$thunder_wpeframework_include"
   )
+
+  # Single-line -I flags (avoid embedded newlines).
+  local common_includes_flags=""
+  for d in "${common_include_dirs[@]}"; do
+    common_includes_flags+=" -I $d"
+  done
+
+  # Semicolon-separated list for CMake list variables.
+  local common_include_dirs_cmake
+  common_include_dirs_cmake="$(IFS=';'; echo "${common_include_dirs[*]}")"
 
   local common_defines=(
     "-DEXCEPTIONS_ENABLE=ON"
@@ -718,14 +753,9 @@ build_all() {
     -DCMAKE_INSTALL_PREFIX="$install_prefix" \
     -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
     -DCMAKE_BUILD_TYPE="$build_type" \
-    -DCMAKE_CXX_FLAGS="
-${common_defines[*]}
-${common_includes[*]}
--include $workspace/entservices-testframework/Tests/mocks/pkg.h
-${coverage_flags[*]}
--Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format=
--Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink -Wl,-wrap,v_secure_system -Wl,-wrap,pclose -Wl,-wrap,setmntent -Wl,-wrap,getmntent
-"
+    -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
+    -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
+    -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink -Wl,-wrap,v_secure_system -Wl,-wrap,pclose -Wl,-wrap,setmntent -Wl,-wrap,getmntent"
   cmake --build "$workspace/build/mocks" -j"$(nproc)"
   cmake --install "$workspace/build/mocks"
 
@@ -742,15 +772,9 @@ ${coverage_flags[*]}
     -DHIDE_NON_EXTERNAL_SYMBOLS=OFF \
     -DENABLE_UNIT_TESTS=ON \
     ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
-    -DCMAKE_CXX_FLAGS="
-${common_defines[*]}
-${common_includes[*]}
--include $workspace/entservices-testframework/Tests/mocks/pkg.h
--include $workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h
-${coverage_flags[*]}
--Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format=
--Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink
-"
+    -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
+    -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
+    -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h -include $workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink"
   cmake --build "$workspace/build/entservices-appgateway" -j"$(nproc)"
   cmake --install "$workspace/build/entservices-appgateway"
 
@@ -767,15 +791,9 @@ ${coverage_flags[*]}
     -DHIDE_NON_EXTERNAL_SYMBOLS=OFF \
     -DENABLE_UNIT_TESTS=ON \
     ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
-    -DCMAKE_CXX_FLAGS="
-${common_defines[*]}
-${common_includes[*]}
--I ./usr/include/libdrm
--include $workspace/entservices-testframework/Tests/mocks/pkg.h
-${coverage_flags[*]}
--Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format=
--Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,--no-as-needed
-"
+    -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
+    -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
+    -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -I ./usr/include/libdrm -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,--no-as-needed"
   cmake --build "$workspace/build/entservices-testframework" -j"$(nproc)"
   cmake --install "$workspace/build/entservices-testframework"
 }
