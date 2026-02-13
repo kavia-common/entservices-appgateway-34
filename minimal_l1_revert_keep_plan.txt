@@ -1,0 +1,27 @@
+Minimal AppGateway L1 coverage: revert-vs-keep plan (entservices-appgateway-34)
+
+Observed git status (top-level):
+- M Thunder
+- M ThunderTools
+- M entservices-testframework
+- M googletest
+
+Root cause:
+All diffs inside these directories are mode-only changes (100644 => 100755) with:
+- 0 insertions / 0 deletions
+- hundreds of files affected per nested repo
+
+Revert vs keep list (exact paths):
+
+REVERT:
+- entservices-appgateway-34/Thunder
+- entservices-appgateway-34/ThunderTools
+- entservices-appgateway-34/entservices-testframework
+- entservices-appgateway-34/googletest
+
+KEEP:
+- None (no AppGateway L1 coverage-specific source/test files are currently modified)
+
+Notes:
+These four directories appear to be nested repos/vendor trees; the changes are permission-bit flips only.
+They are unrelated to minimal AppGateway L1 coverage and should be discarded to reduce risk/noise.
