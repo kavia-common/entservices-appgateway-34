@@ -73,6 +73,16 @@ ThunderTools install behavior (local-permission safe):
                                         to avoid chmod/chown permission failures.
                                 - shared: install ThunderTools into ./install/usr (legacy/CI-like),
                                           may fail in restricted environments.
+
+Thunder install behavior (local-permission safe):
+  THUNDER_INSTALL_MODE          "user" (default) or "shared"
+                                - user: install Thunder into ./install_thunder/usr (permission-safe)
+                                - shared: install Thunder into ./install/usr (legacy/CI-like),
+                                          may fail in restricted environments (chmod on cmake package dirs)
+
+  Note: Script exports CMAKE_PREFIX_PATH and WPEFramework_DIR based on the selected Thunder prefix
+        so subsequent builds/tests pick up that WPEFramework installation.
+
 Outputs:
   ./rdkL1TestResultsWithoutValgrind.json
   ./rdkL1TestResultsWithValgrind.json (if valgrind run)
@@ -145,7 +155,7 @@ cmake_configure_build_install() {
 }
 
 ###############################################################################
-# ThunderTools install-prefix selection (permission-safe default)
+# ThunderTools / Thunder install-prefix selection (permission-safe defaults)
 ###############################################################################
 
 # PUBLIC_INTERFACE
@@ -176,6 +186,35 @@ compute_thundertools_prefixes() {
 
   echo "THUNDERTOOLS_INSTALL_PREFIX=$tt_install_prefix"
   echo "THUNDERTOOLS_MODULE_PATH=$tt_module_path"
+}
+
+# PUBLIC_INTERFACE
+compute_thunder_prefixes() {
+  # Decide where to install Thunder (WPEFramework) so local runs don't fail due to
+  # chmod/chown limitations of the filesystem (common in sandbox/overlay setups).
+  #
+  # The failure we want to avoid is typically:
+  #   file INSTALL cannot set permissions on .../install/usr/lib/cmake/WPEFramework/common
+  #
+  # Outputs (echo as "key=value" lines so caller can eval them safely):
+  #   THUNDER_INSTALL_PREFIX=...
+  #   THUNDER_CMAKE_PREFIX_PATH=...   (should be exported as CMAKE_PREFIX_PATH)
+  #   THUNDER_WPEFRAMEWORK_DIR=...    (directory containing WPEFrameworkConfig.cmake)
+  local workspace="${1:?workspace required}"
+
+  local mode="${THUNDER_INSTALL_MODE:-user}"
+  local thunder_install_prefix
+
+  if [[ "$mode" == "shared" ]]; then
+    thunder_install_prefix="$workspace/install/usr"
+  else
+    # Default: isolate Thunder into a user-writable prefix.
+    thunder_install_prefix="$workspace/install_thunder/usr"
+  fi
+
+  echo "THUNDER_INSTALL_PREFIX=$thunder_install_prefix"
+  echo "THUNDER_CMAKE_PREFIX_PATH=$thunder_install_prefix"
+  echo "THUNDER_WPEFRAMEWORK_DIR=$thunder_install_prefix/lib/cmake/WPEFramework"
 }
 
 ###############################################################################
@@ -422,11 +461,12 @@ generate_external_headers() {
 
 # PUBLIC_INTERFACE
 build_thunder() {
-  # Configure and build Thunder in a dedicated step, printing the build output path.
+  # Configure, build and install Thunder in a dedicated step, printing the build output path.
   #
-  # This is intentionally separate from build_all() so the runner's output clearly
-  # shows Thunder being configured/built, and so users can locate Thunder build
-  # artifacts quickly.
+  # NOTE:
+  #   Thunder *must* be installed to a user-writable prefix in local/sandboxed
+  #   environments. Otherwise `cmake --install` may fail when trying to set
+  #   permissions on installed CMake package dirs (e.g., WPEFramework/common).
   local workspace="${1:?workspace required}"
   local build_type="${BUILD_TYPE:-Debug}"
   local toolchain="${TOOLCHAIN_FILE:-}"
@@ -434,18 +474,48 @@ build_thunder() {
   detect_cmake_generator
   require_cmd cmake
 
-  local install_prefix="$workspace/install/usr"
-  mkdir -p "$install_prefix"
+  # ThunderTools prefix/module-path (needed to run ProxyStubGenerator/JsonGenerator during Thunder build).
+  local thundertools_install_prefix=""
+  local thundertools_module_path=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDERTOOLS_INSTALL_PREFIX) thundertools_install_prefix="$v" ;;
+      THUNDERTOOLS_MODULE_PATH) thundertools_module_path="$v" ;;
+    esac
+  done < <(compute_thundertools_prefixes "$workspace")
+
+  # Thunder (WPEFramework) install prefix (permission-safe default).
+  local thunder_install_prefix=""
+  local thunder_cmake_prefix_path=""
+  local thunder_wpeframework_dir=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDER_INSTALL_PREFIX) thunder_install_prefix="$v" ;;
+      THUNDER_CMAKE_PREFIX_PATH) thunder_cmake_prefix_path="$v" ;;
+      THUNDER_WPEFRAMEWORK_DIR) thunder_wpeframework_dir="$v" ;;
+    esac
+  done < <(compute_thunder_prefixes "$workspace")
+
+  mkdir -p "$thunder_install_prefix"
+
+  # Export so subsequent configure steps (and also this Thunder configure) can find WPEFramework via config mode.
+  export CMAKE_PREFIX_PATH="${thunder_cmake_prefix_path}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+  export WPEFramework_DIR="$thunder_wpeframework_dir"
 
   local thunder_build_dir="$workspace/build/Thunder"
   log "Thunder build directory: $thunder_build_dir"
+  log "Thunder install mode: ${THUNDER_INSTALL_MODE:-user}"
+  log "Thunder install prefix: $thunder_install_prefix"
+  log "Exported CMAKE_PREFIX_PATH: $CMAKE_PREFIX_PATH"
+  log "Exported WPEFramework_DIR: $WPEFramework_DIR"
+  log "ThunderTools CMake module path (for generators): $thundertools_module_path"
 
   cmake -G "${CMAKE_GENERATOR:-Ninja}" \
     -S "$workspace/Thunder" \
     -B "$thunder_build_dir" \
-    -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$install_prefix/../tools/cmake" \
-    -DGENERIC_CMAKE_MODULE_PATH="$install_prefix/../tools/cmake" \
+    -DCMAKE_INSTALL_PREFIX="$thunder_install_prefix" \
+    -DCMAKE_MODULE_PATH="$thundertools_module_path" \
+    -DGENERIC_CMAKE_MODULE_PATH="$thundertools_module_path" \
     -DMESSAGING=ON \
     -DBUILD_TYPE="$build_type" \
     -DBINDING=127.0.0.1 \
@@ -454,6 +524,7 @@ build_thunder() {
     ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"}
 
   cmake --build "$thunder_build_dir" -j"$(nproc)"
+  cmake --install "$thunder_build_dir"
 }
 
 # PUBLIC_INTERFACE
@@ -471,6 +542,8 @@ build_all() {
   require_cmd patch
   require_cmd git
 
+  # CI installs everything into ./install/usr. Locally, we keep "product" artifacts there,
+  # but Thunder itself is installed into a user-writable prefix by default to avoid chmod failures.
   local install_prefix="$workspace/install/usr"
   mkdir -p "$install_prefix"
 
@@ -484,7 +557,23 @@ build_all() {
     esac
   done < <(compute_thundertools_prefixes "$workspace")
 
-  mkdir -p "$thundertools_install_prefix" "$thundertools_module_path"
+  # Choose Thunder install prefix in a permission-safe way.
+  local thunder_install_prefix=""
+  local thunder_cmake_prefix_path=""
+  local thunder_wpeframework_dir=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDER_INSTALL_PREFIX) thunder_install_prefix="$v" ;;
+      THUNDER_CMAKE_PREFIX_PATH) thunder_cmake_prefix_path="$v" ;;
+      THUNDER_WPEFRAMEWORK_DIR) thunder_wpeframework_dir="$v" ;;
+    esac
+  done < <(compute_thunder_prefixes "$workspace")
+
+  mkdir -p "$thundertools_install_prefix" "$thundertools_module_path" "$thunder_install_prefix"
+
+  # Export so *all* subsequent CMake config steps locate Thunder via config mode.
+  export CMAKE_PREFIX_PATH="${thunder_cmake_prefix_path}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+  export WPEFramework_DIR="$thunder_wpeframework_dir"
 
   log "Build type: $build_type"
   if [[ -n "$toolchain" ]]; then
@@ -493,6 +582,10 @@ build_all() {
   log "ThunderTools install mode: ${THUNDERTOOLS_INSTALL_MODE:-user}"
   log "ThunderTools install prefix: $thundertools_install_prefix"
   log "ThunderTools CMake module path: $thundertools_module_path"
+  log "Thunder install mode: ${THUNDER_INSTALL_MODE:-user}"
+  log "Thunder install prefix: $thunder_install_prefix"
+  log "Exported CMAKE_PREFIX_PATH: $CMAKE_PREFIX_PATH"
+  log "Exported WPEFramework_DIR: $WPEFramework_DIR"
 
   # ThunderTools
   log "Step: Build ThunderTools"
@@ -503,16 +596,16 @@ build_all() {
     "$thundertools_module_path" \
     -DEXCEPTIONS_ENABLE=ON
 
-  # For the rest of the build, we continue to install runtime artifacts into ./install/usr,
-  # but point CMake to ThunderTools' Find*.cmake modules and tools from the user-writable prefix.
+  # For the rest of the build, point CMake to ThunderTools' Find*.cmake modules and tools
+  # from the user-writable prefix.
   local cmake_module_path_for_rest="$thundertools_module_path"
 
-  # Thunder
+  # Thunder (install into user-writable prefix by default)
   log "Step: Build Thunder"
   cmake_configure_build_install \
     "$workspace/Thunder" \
     "$workspace/build/Thunder" \
-    "$install_prefix" \
+    "$thunder_install_prefix" \
     "$cmake_module_path_for_rest" \
     -DMESSAGING=ON \
     -DBUILD_TYPE="$build_type" \
@@ -649,13 +742,23 @@ run_tests() {
   local workspace="${1:?workspace required}"
   local install_usr="$workspace/install/usr"
 
+  # Thunder install prefix (may be separate from install/usr)
+  local thunder_install_prefix=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDER_INSTALL_PREFIX) thunder_install_prefix="$v" ;;
+    esac
+  done < <(compute_thunder_prefixes "$workspace")
+  local thunder_usr="$thunder_install_prefix"
+
   if [[ ! -x "$install_usr/bin/RdkServicesL1Test" && ! -x "$install_usr/bin/RdkServicesL1Testd" ]]; then
     # CI uses RdkServicesL1Test on PATH. We'll rely on PATH but print a helpful message.
     warn "RdkServicesL1Test binary not found in $install_usr/bin (will still attempt to run via PATH)."
   fi
 
+  # Prefer locally installed artifacts first, but also include Thunder's libs/plugins from its prefix.
   local env_path="PATH=$install_usr/bin:${PATH}"
-  local env_ld="LD_LIBRARY_PATH=$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+  local env_ld="LD_LIBRARY_PATH=$install_usr/lib:$install_usr/lib/wpeframework/plugins:$thunder_usr/lib:$thunder_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
 
   log "Step: Run unit tests without valgrind"
 
@@ -663,7 +766,7 @@ run_tests() {
   if command -v RdkServicesL1Test >/dev/null 2>&1; then
     (
       export PATH="$install_usr/bin:${PATH}"
-      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:$thunder_usr/lib:$thunder_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
       export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
       RdkServicesL1Test
     )
@@ -672,7 +775,7 @@ run_tests() {
   else
     warn "RdkServicesL1Test not found on PATH; falling back to ctest on build tree."
     (
-      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:$thunder_usr/lib:$thunder_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
       ctest --test-dir "$workspace/build/entservices-appgateway" --output-on-failure
     )
   fi
@@ -682,7 +785,7 @@ run_tests() {
     log "Step: Run unit tests with valgrind"
     (
       export PATH="$install_usr/bin:${PATH}"
-      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:$thunder_usr/lib:$thunder_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
       export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
       valgrind \
         --tool=memcheck \
