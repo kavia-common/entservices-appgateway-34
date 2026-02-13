@@ -1,547 +1,288 @@
-# AppGateway L1Tests Mapping (from Code_Ref L1Tests)
+# AppGateway L1Tests Mapping (from reference `code_ref/Tests/L1Tests/tests`)
 
 ## Purpose and scope
 
-This document maps the reference L1 test style found in `Code_Ref/Tests/L1Tests/tests` to concrete, coverage-oriented L1 test cases for the AppGateway plugin in this repository (`entservices-appgateway-34`). The goal is to maximize AppGateway coverage by enumerating the specific branches and behaviors present in the current AppGateway implementation and by describing what a test must set up, call, and assert.
+This document maps the reference L1 test style found in `code_ref/Tests/L1Tests/tests` to concrete, coverage-oriented L1 test cases for the AppGateway plugin in this repository (`entservices-appgateway-34`). The goal is to maximize AppGateway coverage by enumerating the specific branches and behaviors present in the current AppGateway implementation and by describing what a test must set up, call, and assert.
 
-This document is intentionally code-driven. Every recommended test case is derived from what the current implementation actually does in:
+This mapping is intentionally code-driven. Every recommended test case is derived from what the current AppGateway implementation actually does. The mapping is also pattern-driven: it adapts the established conventions in the reference L1 suite (interface setup via callsign lookup, JSON-RPC registration checks via `handler.Exists`, end-to-end JSON-RPC calls via `handler.Invoke`, and event verification via `EVENT_SUBSCRIBE` and `service->Submit` interception).
 
-It covers plugin wrapper behavior in `AppGateway/AppGateway.cpp`, request routing and configuration in `AppGateway/AppGatewayImplementation.cpp`, config parsing and Thunder invocation in `AppGateway/Resolver.cpp`, and WebSocket/authentication/dispatch logic in `AppGateway/AppGatewayResponderImplementation.cpp`. It also uses `AppGateway/resolutions/resolution.base.json` to identify which request classes (event vs COM-RPC vs Thunder JSON-RPC) need direct test coverage.
+## Reference L1Tests suite patterns (what the reference teaches)
 
-## Reference Code_Ref L1Tests pattern (what it teaches)
+The reference suite under `code_ref/Tests/L1Tests/tests` contains multiple plugin tests (for example `test_AppManager.cpp`, `test_UserSettings.cpp`, `test_LifecycleManager.cpp`, `test_MessageControl.cpp`, `test_RDKShell.cpp`, and `test_UtilsFile.cpp`). These files demonstrate repeatable patterns that are directly applicable to AppGateway.
 
-The only provided reference test file is:
+### Pattern 1: “Registered methods” checks (JSON-RPC surface verification)
 
-`Code_Ref/Tests/L1Tests/tests/test_UtilsFile.cpp`
+Several reference tests start by asserting that a plugin exposes all expected JSON-RPC methods through `Core::JSONRPC::Handler::Exists`, for example:
 
-It is identical in structure to this repository’s `Tests/L1Tests/tests/test_UtilsFile.cpp`. The reference illustrates the key L1 characteristics used in this ecosystem:
+In `test_AppManager.cpp`, `RegisteredMethodsUsingJsonRpcSuccess` checks methods like `getInstalledApps`, `launchApp`, `preloadApp`, `closeApp`, and others.
 
-The test is self-contained and asserts observable outcomes rather than internal state. It uses real filesystem operations in `/tmp`, creates and moves real files, and verifies the final content bytes. It also includes a small portability conditional (`USE_THUNDER_R4`) to match differing Thunder versions.
+In `test_UserSettings.cpp`, `RegisteredMethods` checks a long list of `set*` and `get*` methods.
 
-The implication for AppGateway is that high-value L1 tests should aim for functional results (return codes, JSON payload strings, and side effects such as “Subscribe was called with these parameters”), while using lightweight fakes/mocks only where the code requires a Thunder shell or interfaces queried by callsign.
+In `test_RDKShell.cpp`, `RegisteredMethods` enumerates many JSON-RPC methods.
+
+This pattern is valuable because it gives broad, low-effort coverage of the JSON-RPC registration layer and will quickly reveal missing or renamed methods.
+
+### Pattern 2: JSON-RPC Invoke with explicit request/response assertions
+
+The reference suite frequently uses `handler.Invoke(connection, "method", requestJson, response)` and asserts:
+
+That the return code matches expectations (`Core::ERROR_NONE`, `Core::ERROR_GENERAL`, `Core::ERROR_INVALID_PARAMETER`, and so on).
+
+That the response JSON string matches exactly, or contains specific substrings.
+
+For example, `test_AppManager.cpp` asserts exact JSON event payloads that are emitted via `service->Submit`.
+
+### Pattern 3: COM-RPC and callsign-based dependency injection
+
+The reference tests often simulate the Thunder runtime dependency graph by providing a `ServiceMock` and configuring `QueryInterfaceByCallsign` to return specific interface mocks based on callsign and requested interface ID.
+
+For example, `test_AppManager.cpp` uses `QueryInterfaceByCallsign` to return mocks for:
+
+- `org.rdk.LifecycleManager` (ILifecycleManager / ILifecycleManagerState)
+- `org.rdk.PersistentStore` (IStore2)
+- `org.rdk.StorageManager`
+- `org.rdk.PackageManagerRDKEMS` (IPackageHandler / IPackageInstaller)
+
+The AppGateway plugin uses the same style of callsign lookup for AppNotifications, request handlers, and authenticators. Tests should mimic this reference approach.
+
+### Pattern 4: Event subscription and event payload verification
+
+The reference `test_AppManager.cpp` uses the macros `EVENT_SUBSCRIBE` / `EVENT_UNSUBSCRIBE` and intercepts event payloads via `EXPECT_CALL(*mServiceMock, Submit(...))` to verify that emitted JSON matches an expected string, such as:
+
+- `org.rdk.AppManager.onAppLaunchRequest`
+- `org.rdk.AppManager.onAppLifecycleStateChanged`
+
+For AppGateway, this pattern is directly relevant for two areas:
+
+- Event-style “listen” subscriptions (AppGatewayImplementation routes “event” methods to AppNotifications subscription).
+- WebSocket responder connection status notifications (AppGatewayResponderImplementation submits notifications via jobs).
+
+### Pattern 5: Self-contained file-based testing for config parsing and filesystem utilities
+
+`test_UtilsFile.cpp` illustrates a “real filesystem” approach using `/tmp` and verifying observable outcomes (file exists, bytes match). This is an excellent match for AppGateway’s resolver/config behavior because the resolver loads JSON configs from paths, and L1 tests can write temporary config JSON under `/tmp` to trigger branches deterministically.
 
 ## AppGateway code under test (what we are mapping to)
 
-### Plugin wrapper: `WPEFramework::Plugin::AppGateway`
+This mapping covers:
 
-`AppGateway/AppGateway.cpp` and `AppGateway/AppGateway.h` implement the Thunder plugin wrapper that:
+- Plugin wrapper behavior in `AppGateway/AppGateway.cpp` and `AppGateway/AppGateway.h`.
+- Request routing and configuration in `AppGateway/AppGatewayImplementation.cpp`.
+- Resolution parsing and Thunder invocation in `AppGateway/Resolver.cpp`.
+- WebSocket/authentication/dispatch logic in `AppGateway/AppGatewayResponderImplementation.cpp`.
+- Method classification inputs in `AppGateway/resolutions/resolution.base.json`.
 
-It stores `mService`, roots the out-of-process resolver and responder implementations (`Root<Exchange::IAppGatewayResolver>` and `Root<Exchange::IAppGatewayResponder>`), optionally calls `IConfiguration::Configure(service)` on each, registers/unregisters the JSON-RPC interface via `Exchange::JAppGatewayResolver::{Register,Unregister}`, and terminates remote connections in `Deinitialize()`.
+## Concrete mapping: recommended AppGateway L1 tests (aligned to reference patterns)
 
-This wrapper has critical error branches that are easy to miss if tests only cover the inner implementations.
+The test cases below are organized by AppGateway component and are phrased as: what to test, what reference pattern it mirrors, where it lands in code, and what to assert.
 
-### Resolver implementation and routing: `WPEFramework::Plugin::AppGatewayImplementation`
+### A. JSON-RPC surface tests (reference “RegisteredMethods” pattern)
 
-`AppGateway/AppGatewayImplementation.cpp` implements:
+#### A1. AppGateway exposes resolver methods via JSON-RPC registration
 
-It creates a `Resolver` and loads config via `InitializeResolver()` (regional config in `/etc/app-gateway/resolutions.json` with fallback to `/etc/app-gateway/resolution.base.json`). It also provides an override configuration entry point `Configure(IStringIterator* paths)` for testability. It routes each `Resolve()` to one of three paths based on the loaded resolution entry:
+This mirrors `test_AppManager.cpp` / `test_UserSettings.cpp` “RegisteredMethods” checks.
 
-It treats a method as an event when `Resolver::HasEvent(method)` is true, then it requires JSON params containing boolean `listen` and subscribes via `IAppNotifications::Subscribe(...)`.
+The test should initialize the AppGateway plugin and assert that the `Core::JSONRPC::Handler` reports expected resolver methods exist. The exact method names to check must match the symbols registered by `Exchange::JAppGatewayResolver::Register(*this, ...)` in the AppGateway wrapper.
 
-It routes to COM-RPC when `Resolver::HasComRpcRequestSupport(method)` is true, using `QueryInterfaceByCallsign<Exchange::IAppGatewayRequestHandler>(alias)` and calling `HandleAppGatewayRequest(...)`. In this branch, `UpdateContext(..., onlyAdditionalContext=true)` wraps parameters in a `{"params": <original>, "_additionalContext": {...}}` object if an additional context object is present.
+The assertions should be:
 
-It routes to Thunder JSON-RPC when neither event nor COM-RPC, and it may inject a `context` object into the params object when `includeContext` is enabled for the method. It then calls `Resolver::CallThunderPlugin(alias, finalParams, resolution)`.
+It asserts that `handler.Exists("...")` returns `Core::ERROR_NONE` for each required method.
 
-It also enforces permission groups (when configured in the resolution entry) by acquiring an authenticator (`QueryInterfaceByCallsign<Exchange::IAppGatewayAuthenticator>(GATEWAY_AUTHENTICATOR_CALLSIGN)`) and calling `CheckPermissionGroup(appId, permissionGroup, allowed)`.
+It asserts that `handler.Exists("aDefinitelyMissingMethod")` returns a non-zero error to prove the test is meaningful.
 
-### Configuration parsing and Thunder invocation: `WPEFramework::Plugin::Resolver`
+Note: this document does not hardcode the exact JSON-RPC method strings because the AppGateway JSON-RPC facade is generated and can vary by interface version. The test should use the same names that are used by clients in the repository (or derive them from the generated `JAppGatewayResolver` headers).
 
-`AppGateway/Resolver.cpp` implements:
+### B. Resolver config parsing tests (`Resolver::LoadConfig`) (reference “/tmp filesystem” pattern)
 
-It loads resolution entries from JSON using `LoadConfig(path)`, storing them in an internal map keyed by the lowercased method string. It extracts fields `alias`, `event`, `permissionGroup`, `additionalContext`, `includeContext`, and `useComRpc`. It defaults `includeContext` and `useComRpc` to `true` when `additionalContext` is a JSON object and the booleans are not explicitly present. It also parses `alias` by splitting on the last dot to determine `callsign` and `pluginMethod` for Thunder invocation.
+These tests follow the `test_UtilsFile.cpp` pattern: create temp files under `/tmp`, call methods, and assert results.
 
-`CallThunderPlugin` obtains a Thunder controller client via `Utils::GetThunderControllerClient(mService, callsign)` and then performs `Invoke<std::string, std::string>(pluginMethod, params, response)`.
-
-### WebSocket side: `WPEFramework::Plugin::AppGatewayResponderImplementation`
-
-`AppGateway/AppGatewayResponderImplementation.cpp` implements:
-
-It starts a WebSocket server using `WebSocketConnectionManager`, sets a message handler that schedules `WsMsgJob`, sets an auth handler that extracts a `session` query parameter from a token, authenticates it to an `appId`, and registers `connectionId -> appId` internally. On disconnect it cleans up, emits connection status notifications, and calls `IAppNotifications::Cleanup(connectionId, APP_GATEWAY_CALLSIGN)` if available.
-
-It dispatches WebSocket messages in `DispatchWsMsg(...)` by constructing a `Context { requestId, connectionId, appId }`, querying the resolver interface (`mService->QueryInterface<Exchange::IAppGatewayResolver>()`), and calling `Resolve(context, APP_GATEWAY_CALLSIGN, method, params, resolution)`. If there is no appId for the connection, it closes the connection via `mWsManager.Close(connectionId)`.
-
-## Concrete mapping: recommended AppGateway L1 tests (code-accurate)
-
-The following test cases are expressed as “what to test”, “where in code it lands”, and “what to assert”. They are intended to be implemented in the L1 tests suite (under this repo’s `Tests/L1Tests/tests/`) and linked into the L1 runner (via the external testframework repo), consistent with `Tests/README.md`.
-
-### A. Code_Ref-aligned “file-based config” tests for `Resolver::LoadConfig`
-
-These tests are the closest match to the Code_Ref `UtilsFile` pattern because they can create temp files and assert observable outcomes without requiring a live Thunder runtime.
-
-#### A1. LoadConfig fails when file is missing
+#### B1. LoadConfig fails when file is missing
 
 It targets `Resolver::LoadConfig` early failure when `std::ifstream(path)` is not open.
 
-It sets up a `Resolver` instance and calls `LoadConfig("/tmp/does-not-exist.json")`.
+It asserts that `LoadConfig("/tmp/does-not-exist.json")` returns `false` and that `IsConfigured()` remains `false`.
 
-It asserts that the return value is `false`, and that `IsConfigured()` remains `false`.
+#### B2. LoadConfig fails on invalid JSON
 
-#### A2. LoadConfig fails on invalid JSON
+It targets the JSON parse failure branch (`IElement::FromString`).
 
-It targets `IElement::FromString(jsonContent, error)` failure branch.
+It writes invalid JSON to `/tmp` and asserts `LoadConfig(path)` returns `false`.
 
-It writes an invalid JSON file under `/tmp` and calls `LoadConfig(path)`.
+#### B3. LoadConfig fails when `resolutions` is missing
 
-It asserts `false` and `IsConfigured()` remains `false`.
+It writes a valid JSON file without a `resolutions` object and asserts `LoadConfig` returns `false`.
 
-#### A3. LoadConfig fails when `resolutions` is missing
+#### B4. LoadConfig loads an entry and lowercases the resolution key
 
-It targets the explicit check:
+It targets the lowercasing behavior (`StringUtils::toLower(it.Label())`).
 
-`if (!config.Resolutions.IsSet()) { ... return false; }`
+It writes a config with a mixed-case key and asserts `ResolveAlias(lowercaseKey)` returns the expected alias.
 
-It writes a valid JSON file with a top-level object that does not include `"resolutions"`.
+#### B5. LoadConfig marks event methods and COM-RPC methods correctly
 
-It asserts `false`.
+It writes a config entry with an `event` field and asserts `HasEvent(methodKey)` is true.
 
-#### A4. LoadConfig loads an alias-only resolution and lowercases keys
+It writes a config entry with `useComRpc: true` and asserts `HasComRpcRequestSupport(methodKey)` is true.
 
-It targets resolution insertion and case-insensitive lookup behavior:
+#### B6. Default boolean behavior when `additionalContext` is an object
 
-`const std::string& key = StringUtils::toLower(it.Label());`
+It writes `additionalContext` as an object without explicitly setting `includeContext` and `useComRpc`, then asserts the defaults reflect `hasAdditionalContext`.
 
-It writes:
+This is important because AppGateway uses context injection and additional context in multiple branches.
 
-```json
-{
-  "resolutions": {
-    "Device.Name": { "alias": "org.rdk.AppGatewayCommon", "useComRpc": true }
-  }
-}
-```
+#### B7. Multiple config loads override earlier entries
 
-It asserts:
+It loads config A then config B for the same key and asserts that the later alias is returned.
 
-It returns `true`.
+This matches how the implementation overwrites `mResolutions[key]`.
 
-It makes `IsConfigured()` true.
+### C. AppGatewayImplementation resolution routing tests (event vs COM-RPC vs Thunder)
 
-It returns `org.rdk.AppGatewayCommon` from `ResolveAlias("device.name")`.
+These tests should follow the reference’s callsign-based injection style (as in `test_AppManager.cpp`) by using a `ServiceMock` whose `QueryInterfaceByCallsign` returns the necessary dependency mocks.
 
-#### A5. LoadConfig marks event presence when `event` string is set
+#### C1. Resolve fails when resolver is not initialized
 
-It targets `HasEvent` and the `event` string extraction.
+It targets `AppGatewayImplementation::Resolve` before the resolver is set up.
 
-It writes a resolution entry including `"event": "Device.onDeviceNameChanged"`.
+It asserts return `Core::ERROR_GENERAL` and that the `resolution` output string includes the phrase “Resolver not initialized”.
 
-It asserts `HasEvent("device.onnamechanged")` is true (matching the key used in the JSON file you wrote).
+#### C2. Resolve fails when resolver is not configured
 
-#### A6. Default boolean behavior when `additionalContext` is an object
+It targets the `!IsConfigured()` branch.
 
-This targets the defaulting logic:
+It asserts return `Core::ERROR_GENERAL` and that `resolution` indicates “Resolver not configured”.
 
-`bool hasAdditionalContext = r.additionalContext.Content() == OBJECT;`
-`includeContext = ExtractBooleanField(..., default=hasAdditionalContext)`
-`useComRpc = ExtractBooleanField(..., default=hasAdditionalContext)`
+#### C3. Resolve fails when method has no alias (NotSupported)
 
-It writes a resolution entry with:
+It loads a config that does not contain the requested method and asserts:
 
-`"additionalContext": {"foo":"bar"}` and omits `includeContext` and `useComRpc`.
+It returns `Core::ERROR_GENERAL`.
 
-It asserts:
+The `resolution` is an error JSON consistent with the NotSupported helper (non-empty, and stable enough to validate via substring checks).
 
-`HasIncludeContext(key, additionalContext)` returns `true` and `additionalContext` is set to an object.
+#### C4. Event routing: missing params / missing `listen` (BadRequest)
 
-`HasComRpcRequestSupport(key)` returns `true`.
+This maps to AppGateway’s `PreProcessEvent` checks:
 
-It also should include a companion test where `includeContext` is explicitly `false` even when `additionalContext` is an object, and assert that `HasIncludeContext` is `false`.
+If params are not valid JSON, it returns a bad request error indicating event methods require parameters.
 
-#### A7. Overriding behavior when loading multiple configs
+If params JSON does not include a boolean `listen`, it returns a bad request error indicating missing required boolean `listen`.
 
-It targets the override behavior:
+These tests should assert both the error code (`Core::ERROR_BAD_REQUEST`) and that `resolution` includes the corresponding message.
 
-`mResolutions[key] = std::move(r);` and the “overriddenCount” path.
+#### C5. Event routing: subscribe and response shape (reference “event payload verification” idea)
 
-It loads config A defining the same method key with alias A, then config B defining the same key with alias B.
+This maps to the reference suite’s emphasis on observable outcomes, like verifying `service->Submit` payloads in `test_AppManager.cpp`. For AppGateway, the key observable is that the gateway calls into AppNotifications with the correct parameters and returns the correct JSON response.
 
-It asserts `ResolveAlias(key)` returns alias B after the second load, confirming later loads override earlier entries (which matches how `InternalResolutionConfigure` is documented and implemented).
+The test should:
 
-#### A8. ParseAlias uses the last dot
+Provide a fake or mock `Exchange::IAppNotifications` via callsign lookup.
 
-It targets `Resolver::ParseAlias` using `rfind('.')`.
+Call `Resolve` for an event method with `{"listen": true}` and assert:
 
-It calls `ParseAlias("org.rdk.AppGatewayCommon.method", callsign, method)`.
+The subscription method is called with the expected alias and event identifiers.
 
-It asserts callsign is `org.rdk.AppGatewayCommon` and method is `method`.
+`Resolve` returns `Core::ERROR_NONE`.
 
-This is important because it is how `CallThunderPlugin` decides `callsign` vs `pluginMethod`.
+`resolution` contains JSON that includes `listening` and `event`.
 
-### B. `AppGatewayImplementation::Configure(pathsIterator)` tests (pure validation + successful config load)
+Important implementation detail: AppGateway’s event branch uses the *method key* as the event identifier when building the result and when calling into AppNotifications. Tests should assert the behavior as implemented, not as might be expected from the `Resolution.event` field.
 
-These tests avoid hard-coded `/etc/app-gateway` dependencies by using the override `Configure(IStringIterator*)` and temporary config files created under `/tmp`.
+#### C6. COM-RPC routing: request handler missing (NotAvailable)
 
-#### B1. Configure(paths) returns BAD_REQUEST on null iterator
+It targets the branch where `QueryInterfaceByCallsign<Exchange::IAppGatewayRequestHandler>(alias)` returns null.
 
-It targets:
+It asserts return `Core::ERROR_GENERAL` and `resolution` indicates NotAvailable.
 
-`if (paths == nullptr) return Core::ERROR_BAD_REQUEST;`
+#### C7. COM-RPC routing: additional context wrapping (`_additionalContext`)
 
-It asserts the return value equals `Core::ERROR_BAD_REQUEST`.
+It targets `UpdateContext(... onlyAdditionalContext=true)` behavior.
 
-#### B2. Configure(paths) returns GENERAL when resolver is not initialized
+The test should:
 
-It targets:
+Create a resolution entry with `additionalContext` as a JSON object.
 
-`if (mResolverPtr == nullptr) return Core::ERROR_GENERAL;`
+Call `Resolve` with a JSON params object.
 
-It constructs `AppGatewayImplementation` and calls `Configure(pathsIterator)` without first calling `Configure(PluginHost::IShell*)` (which calls `InitializeResolver`).
+Assert that the request handler receives a JSON string shaped as:
 
-It asserts `Core::ERROR_GENERAL`.
+- A top-level object containing `params` (the original params object)
+- And `_additionalContext` containing the configured additional context fields plus an injected `origin`
 
-#### B3. Configure(paths) returns BAD_REQUEST when iterator yields no paths
+This is a high-value structural assertion because it covers a core “gateway enrichment” behavior.
 
-It targets `if (configPaths.empty()) return Core::ERROR_BAD_REQUEST;`
+### D. Permission group enforcement tests
 
-It provides an iterator whose `Next(currentPath)` returns false immediately.
+This area has the same style of dependency injection used throughout the reference suite: call `QueryInterfaceByCallsign` to get the authenticator.
 
-It asserts `Core::ERROR_BAD_REQUEST`.
+#### D1. Permission denied when authenticator returns error
 
-#### B4. InternalResolutionConfigure returns GENERAL if no provided config loads
-
-It targets `if (!anyConfigLoaded) return Core::ERROR_GENERAL;`
-
-It provides a paths iterator returning only nonexistent file paths.
-
-It asserts `Core::ERROR_GENERAL`.
-
-#### B5. InternalResolutionConfigure succeeds when at least one config loads
-
-It provides two paths, one missing, one valid config JSON.
-
-It asserts `Core::ERROR_NONE` and that the resolver can now resolve methods from the loaded config.
-
-#### B6. Override order matches implementation (“later paths take precedence”)
-
-It loads two configs with the same resolution key, and asserts that the alias corresponds to the later file.
-
-This directly covers the intended behavior described by log messages and implemented in `InternalResolutionConfigure`.
-
-### C. `AppGatewayImplementation::FetchResolvedData` routing tests (event vs COM-RPC vs Thunder)
-
-These tests provide the highest functional coverage of the gateway’s behavior. They require a fake `PluginHost::IShell` that can satisfy `QueryInterfaceByCallsign<...>(alias)` and/or `QueryInterfaceByCallsign<...>(APP_NOTIFICATIONS_CALLSIGN)` calls.
-
-#### C1. Resolve returns “Resolver not initialized”
-
-It targets:
-
-`if (mResolverPtr == nullptr) { ErrorUtils::CustomInitialize("Resolver not initialized", resolution); return Core::ERROR_GENERAL; }`
-
-It calls `Resolve(...)` before `Configure(shell)`.
-
-It asserts it returns `Core::ERROR_GENERAL` and that the returned `resolution` contains the error message string (at minimum the phrase “Resolver not initialized”).
-
-#### C2. Resolve returns “Resolver not configured”
-
-It targets:
-
-`if (!mResolverPtr->IsConfigured()) { ErrorUtils::CustomInitialize("Resolver not configured", ...); return ERROR_GENERAL; }`
-
-It sets up `mResolverPtr` (by calling `Configure(shell)` in an environment where `InitializeResolver()` creates the Resolver but does not load any config), or it constructs a test seam where the resolver map is empty.
-
-It asserts `Core::ERROR_GENERAL` and that `resolution` contains “Resolver not configured”.
-
-#### C3. Resolve returns NotSupported when alias is missing
-
-It targets:
-
-`std::string alias = mResolverPtr->ResolveAlias(method); if (alias.empty()) { ErrorUtils::NotSupported(resolution); return ERROR_GENERAL; }`
-
-It loads a config that does not include the method.
-
-It asserts the error code and that the resolution is the NotSupported error JSON string (or at least that it is non-empty and corresponds to NotSupported).
-
-#### C4. Event pre-processing: params must be JSON
-
-It targets:
-
-`if (!params_obj.FromString(params)) { CustomBadRequest("Event methods require parameters", ...); return BAD_REQUEST; }`
-
-It chooses an event method from `AppGateway/resolutions/resolution.base.json`, for example:
-
-`"device.onnamechanged"` with `"event": "Device.onDeviceNameChanged"`
-
-It calls `Resolve(...)` with a non-JSON params string.
-
-It asserts `Core::ERROR_BAD_REQUEST` and that the resolution contains the “Event methods require parameters” message.
-
-#### C5. Event pre-processing: params must include boolean `listen`
-
-It targets:
-
-`if (!ObjectUtils::HasBooleanEntry(params_obj, "listen", resultValue)) { CustomBadRequest("Missing required boolean 'listen' parameter", ...); return BAD_REQUEST; }`
-
-It calls an event method with params `{}`.
-
-It asserts `Core::ERROR_BAD_REQUEST` and that the resolution contains the missing `listen` message.
-
-#### C6. Event subscribe success: listen true/false
-
-It targets `HandleEvent` and subscription via:
-
-`mAppNotifications->Subscribe(ContextUtils::ConvertAppGatewayToNotificationContext(...), listen, alias, event);`
-
-It uses a fake `IAppNotifications` returned by `QueryInterfaceByCallsign(APP_NOTIFICATIONS_CALLSIGN)` and captures the call.
-
-It asserts:
-
-`Resolve(...)` returns `Core::ERROR_NONE` when the fake `Subscribe` returns `Core::ERROR_NONE`.
-
-The `resolution` string is JSON that includes `"listening": true/false` and `"event": <method>` (note: the implementation uses the *method*, not the underlying alias event string).
-
-The `Subscribe` call uses `alias` equal to `"org.rdk.AppGatewayCommon"` and `event` equal to the method key being resolved.
-
-#### C7. Event subscribe fails when AppNotifications is not available
-
-It targets:
-
-If `mService->QueryInterfaceByCallsign<IAppNotifications>` returns null, `HandleEvent` returns `Core::ERROR_GENERAL`.
-
-It asserts that `Resolve(...)` returns `Core::ERROR_GENERAL`.
-
-#### C8. COM-RPC request handler missing returns NotAvailable
-
-This targets:
-
-`requestHandler = QueryInterfaceByCallsign<IAppGatewayRequestHandler>(alias); if (requestHandler == nullptr) { NotAvailable(resolution); }`
-
-It chooses a non-event method that has `"useComRpc": true` in `resolution.base.json`, for example:
-
-`device.name` with alias `org.rdk.AppGatewayCommon`
-
-It sets up the fake shell so that `QueryInterfaceByCallsign<IAppGatewayRequestHandler>("org.rdk.AppGatewayCommon")` returns null.
-
-It asserts `Core::ERROR_GENERAL` and that resolution is NotAvailable.
-
-#### C9. COM-RPC request handler failure sets internal error if resolution is empty
-
-It targets:
-
-If `HandleAppGatewayRequest` returns not OK and `resolution` is empty, it sets:
-
-`ErrorUtils::CustomInternal("HandleAppGatewayRequest failed", resolution);`
-
-It sets up a fake handler that returns an error and does not set `resolution`.
-
-It asserts:
-
-Return is `Core::ERROR_GENERAL`.
-
-Resolution is non-empty and includes “HandleAppGatewayRequest failed”.
-
-#### C10. COM-RPC request handler success and parameter shaping for `_additionalContext`
-
-This targets `UpdateContext(... onlyAdditionalContext=true)` and the final call:
-
-`requestHandler->HandleAppGatewayRequest(context, method, finalParams, resolution)`
-
-To make this test meaningful you should load a resolution entry that includes `"additionalContext"` as an object and (implicitly or explicitly) enables includeContext.
-
-It asserts the fake handler receives a JSON string shaped as:
-
-`{"params": <original params object>, "_additionalContext": {"origin": <origin>, ...}}`
-
-It also asserts that the `origin` passed into `Resolve` is present in `_additionalContext.origin`.
-
-### D. Permission group tests (`permissionGroup` in resolution entries)
-
-`resolution.base.json` includes permission groups for methods such as `device.setName`, `localization.setLocale`, and others.
-
-#### D1. Permission denied when CheckPermissionGroup returns error
-
-It targets:
-
-`if (ERROR_NONE != CheckPermissionGroup(...)) { NotPermitted(resolution); return ERROR_GENERAL; }`
-
-It supplies a fake authenticator that returns a non-zero error.
-
-It asserts `Core::ERROR_GENERAL` and that resolution is NotPermitted.
+It forces `CheckPermissionGroup` to return an error and asserts NotPermitted.
 
 #### D2. Permission denied when allowed is false
 
-It targets the explicit `if (!allowed) { NotPermitted(...) }` branch.
+It forces `allowed=false` with a success return code and asserts NotPermitted.
 
-It supplies a fake authenticator that returns `ERROR_NONE` and sets `allowed=false`.
+#### D3. Permission allowed continues to downstream route
 
-It asserts `NotPermitted`.
+It forces `allowed=true` and asserts the downstream route is taken and succeeds (for example, COM-RPC handler is called).
 
-#### D3. Permission allowed when allowed is true
+Important: in the current implementation, permission enforcement only runs if `SetupAppGatewayAuthenticator()` succeeds. If the authenticator interface cannot be queried, the request does not fail closed. Tests should explicitly capture this current behavior so security-sensitive changes are intentional.
 
-It supplies a fake authenticator returning `allowed=true` and ensures the downstream route succeeds (COM-RPC or event). It asserts `Core::ERROR_NONE`.
+### E. WebSocket responder tests (`AppGatewayResponderImplementation`) (reference “self-contained shell” pattern)
 
-Important implementation detail: permission checks are only performed if `SetupAppGatewayAuthenticator()` returns true. If the authenticator cannot be queried, the current code does not fail the request by default. Tests should explicitly document the observed behavior so it does not silently change.
+`test_MessageControl.cpp` includes a minimal `TestShell` implementation of `PluginHost::IShell` used for plugin initialization. For AppGateway’s responder, a similar minimal shell can be used where needed.
 
-### E. Thunder JSON-RPC invocation tests (`Resolver::CallThunderPlugin`) focusing on validation branches
+High-value responder tests include:
 
-Full success-path coverage of `CallThunderPlugin` requires controlling `Utils::GetThunderControllerClient(...)`, which is usually done through a link seam or by running in an environment with a real Thunder controller client. L1 unit-style tests can still cover important validation paths.
+It denies authentication when the `session` query is missing from the token.
 
-#### E1. CallThunderPlugin returns GENERAL on empty alias
+It denies authentication when the authenticator interface is unavailable.
 
-It targets `if (alias.empty()) return ERROR_GENERAL;`.
+It closes the connection when a message is received for a connectionId with no registered appId.
 
-It asserts `Core::ERROR_GENERAL`.
+It calls resolver `Resolve` with a context that includes `requestId`, `connectionId`, and `appId` when the appId mapping exists.
 
-#### E2. CallThunderPlugin returns GENERAL when alias contains no dot
-
-It targets `ParseAlias(alias, callsign, pluginMethod)` and then:
-
-`if (pluginMethod.empty()) return ERROR_GENERAL;`
-
-It calls with alias `"org.rdk.AppGatewayCommon"`.
-
-It asserts `Core::ERROR_GENERAL`.
-
-#### E3. CallThunderPlugin returns GENERAL when thunderLink cannot be created
-
-It targets:
-
-`auto thunderLink = Utils::GetThunderControllerClient(...); if (!thunderLink) return ERROR_GENERAL;`
-
-This branch is reachable when the environment cannot create a controller client.
-
-It asserts `Core::ERROR_GENERAL`.
-
-### F. WebSocket responder tests (`AppGatewayResponderImplementation`)
-
-These tests are higher-effort because much behavior is behind lambdas given to the WebSocket manager and behind worker pool jobs. However, the code contains direct logic that can be covered, and the mapping below specifies what should be exercised for coverage.
-
-#### F1. Auth handler denies tokens missing `session=...`
-
-It targets:
-
-`sessionId = Utils::ResolveQuery(token, "session"); if (sessionId.empty()) return false;`
-
-It asserts the auth handler returns false.
-
-#### F2. Auth handler denies when authenticator interface is unavailable
-
-It targets the branch where:
-
-`mService->QueryInterfaceByCallsign<IAppGatewayAuthenticator>(...)` returns null.
-
-It asserts false.
-
-#### F3. Auth handler success stores appId and emits connected notification job
-
-It targets:
-
-On success `Authenticate(sessionId, appId)` returns `ERROR_NONE`, then it adds to `mAppIdRegistry` and submits `ConnectionStatusNotificationJob`.
-
-It asserts the registry contains the connection mapping (this may require a test seam if the registry is private; alternatively assert behavior via subsequent dispatch).
-
-#### F4. DispatchWsMsg closes connection if appId is missing
-
-It targets:
-
-`if (!mAppIdRegistry.Get(connectionId, appId)) { mWsManager.Close(connectionId); }`
-
-It asserts `Close(connectionId)` is called.
-
-#### F5. DispatchWsMsg calls resolver Resolve when appId exists
-
-It targets:
-
-`mResolver->Resolve(context, APP_GATEWAY_CALLSIGN, method, params, resolution)`
-
-It sets up a fake resolver interface returned by `mService->QueryInterface<Exchange::IAppGatewayResolver>()`.
-
-It asserts `Resolve` is called with:
-
-`origin` equal to `APP_GATEWAY_CALLSIGN`
-
-`context.connectionId` and `context.requestId` matching the dispatch inputs
-
-`context.appId` matching the registry mapping.
-
-#### F6. Disconnect handler calls AppNotifications Cleanup if available
-
-It targets:
-
-`QueryInterfaceByCallsign<IAppNotifications>(APP_NOTIFICATIONS_CALLSIGN)` and then `Cleanup(connectionId, APP_GATEWAY_CALLSIGN)`.
-
-It asserts `Cleanup` is called.
-
-#### F7. Register prevents duplicate notifications
-
-It targets:
-
-`std::find(...) == end` check in `Register`.
-
-It asserts registering the same notification twice results in only one stored instance (and therefore only one `AddRef`).
-
-#### F8. Unregister returns GENERAL when notification not found
-
-It targets:
-
-The `else { LOGERR("notification not found"); }` path and returns `Core::ERROR_GENERAL`.
-
-It asserts error code.
-
-#### F9. OnConnectionStatusChanged calls all callbacks
-
-It targets the iteration in `OnConnectionStatusChanged`.
-
-It registers two notification fakes and asserts both are invoked with expected arguments.
-
-## Implementation details that tests must reflect (important for correctness)
+## Implementation details that tests must reflect
 
 ### 1. Resolution keys are always lowercased in `Resolver`
 
-Because `LoadConfig` lowercases `it.Label()`, tests must ensure:
+Because `LoadConfig` lowercases keys, tests must query using normalized keys and should include a case-insensitivity test.
 
-They query using any case but expect normalized behavior.
+### 2. Event method naming as implemented
 
-They do not assume case-sensitive method keys.
+Even if the config stores an `event` field, the implementation uses the method key when returning `event` in responses and when passing `event` to the notification subscription.
 
-### 2. Event “method” vs “event” naming
+### 3. COM-RPC alias shape
 
-For event entries, `resolution.base.json` stores:
-
-Key like `device.onnamechanged` with `"event": "Device.onDeviceNameChanged"`
-
-However, `PreProcessEvent` uses `returnResult["event"] = method` and `HandleEvent(..., alias, method, ...)` passes `event` equal to the method string, not the `Resolution.event` string.
-
-Tests should assert the behavior as implemented (and not as one might expect logically).
-
-### 3. COM-RPC alias is a callsign, not a callsign.method
-
-For COM-RPC, the base config uses:
-
-`"alias": "org.rdk.AppGatewayCommon"`
-
-`ProcessComRpcRequest` uses `QueryInterfaceByCallsign<IAppGatewayRequestHandler>(alias)` where `alias` must be a callsign string.
-
-For Thunder JSON-RPC invocation, `CallThunderPlugin` expects alias strings that include a method suffix (`callsign.method`). If in the future there are entries that are non-COM-RPC and use Thunder invocation, those entries must use the dotted alias format, or they will fail the `pluginMethod.empty()` validation branch.
+In COM-RPC routing, the alias used for callsign lookup is a callsign (for example `org.rdk.AppGatewayCommon`), not a `callsign.method` string. This differs from the Thunder JSON-RPC invocation path in `CallThunderPlugin`, which expects `callsign.method`.
 
 ### 4. `_additionalContext` wrapping structure
 
-When `UpdateContext(... onlyAdditionalContext=true)` is in effect and additional context is a JSON object, the final params string becomes a JSON object with:
+When additional context is enabled for COM-RPC routing, the final params string becomes an object containing `params` and `_additionalContext`. Tests should assert this exact shape.
 
-`params`: the parsed original params object (or empty object if parse failed)
+## Coverage gaps and risks (derived from reference suite and AppGateway’s architecture)
 
-`_additionalContext`: the configured additional context object plus an injected `origin` field.
-
-Tests should assert this exact structure because it is a key part of the COM-RPC branch behavior.
-
-## Coverage gaps and risks (derived from current implementation)
-
-### Gap 1: The provided Code_Ref L1Tests suite is minimal
-
-Only the UtilsFile example is present in the reference folder. It does not demonstrate how to fake a Thunder `IShell`, how to implement “callsign interface registry” fakes, or how to validate workerpool job outcomes. AppGateway L1 tests will need helper fakes beyond what Code_Ref shows, even if the overall “functional outcome first” style is preserved.
-
-### Gap 2: Permission enforcement when authenticator is missing is not fail-closed
-
-Permission checks are only executed if `SetupAppGatewayAuthenticator()` succeeds. If the authenticator is unavailable, the current code proceeds without returning NotPermitted. This behavior should be explicitly captured in tests so it does not change unintentionally (and should be reviewed from a security standpoint).
-
-### Gap 3: Hard-coded `/etc/app-gateway` paths make `InitializeResolver()` branch coverage environment-dependent
-
-`InitializeResolver()` reads:
-
-`/etc/app-gateway/resolutions.json` and falls back to `/etc/app-gateway/resolution.base.json`
-
-Unless the L1 environment stages those paths, tests should prefer the override configuration API (`Configure(IStringIterator*)`) and direct `Resolver::LoadConfig` tests using `/tmp` files.
+The reference suite demonstrates both JSON-RPC and COM-RPC style testing, but AppGateway combines multiple subsystems (resolver, permission checks, notification subscription, and WebSocket dispatch). Achieving high coverage will require reusable mocks similar to the reference’s `ServiceMock`-based callsign injection, and some tests may need to validate behavior using substring checks on resolution JSON rather than exact full-string comparisons, depending on error formatting helpers.
 
 ## Sources
 
-This mapping is derived from the following sources:
+This mapping is derived from:
 
-It uses the reference Code_Ref L1 test `Code_Ref/Tests/L1Tests/tests/test_UtilsFile.cpp` and its identical counterpart in this repository (`Tests/L1Tests/tests/test_UtilsFile.cpp`). The AppGateway behaviors are mapped directly from `AppGateway/AppGateway.cpp`, `AppGateway/AppGatewayImplementation.cpp`, `AppGateway/Resolver.cpp`, and `AppGateway/AppGatewayResponderImplementation.cpp`, and the method classification (event vs COM-RPC vs permission group) is derived from `AppGateway/resolutions/resolution.base.json`.
+- Reference L1 tests:  
+  - `code_ref/Tests/L1Tests/tests/test_AppManager.cpp`  
+  - `code_ref/Tests/L1Tests/tests/test_UserSettings.cpp`  
+  - `code_ref/Tests/L1Tests/tests/test_LifecycleManager.cpp`  
+  - `code_ref/Tests/L1Tests/tests/test_MessageControl.cpp`  
+  - `code_ref/Tests/L1Tests/tests/test_RDKShell.cpp`  
+  - `code_ref/Tests/L1Tests/tests/test_UtilsFile.cpp`  
+  - `code_ref/Tests/L1Tests/CMakeLists.txt`
+- AppGateway implementation:  
+  - `AppGateway/AppGateway.cpp`  
+  - `AppGateway/AppGateway.h`  
+  - `AppGateway/AppGatewayImplementation.cpp`  
+  - `AppGateway/Resolver.cpp`  
+  - `AppGateway/AppGatewayResponderImplementation.cpp`  
+  - `AppGateway/resolutions/resolution.base.json`
+- Supporting repo docs:  
+  - `Tests/README.md`  
+  - `docs/l1-workflow-vs-runner.md`
