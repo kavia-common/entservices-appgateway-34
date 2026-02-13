@@ -17,6 +17,23 @@
 #   - Some CI steps require root (apt install, /dev nodes, various /opt paths).
 #     This script exposes flags/env toggles so it can run in a typical dev machine.
 #   - This script is intended to be EXECUTED, not sourced.
+#
+# Important local-build note (permission issue):
+#   ThunderTools "cmake --install" may fail on some systems with:
+#     file INSTALL cannot set permissions .../install/usr/sbin/ProxyStubGenerator
+#   when the install prefix is on a filesystem that disallows chmod/chown changes
+#   (common in sandboxed/overlay environments).
+#
+#   To keep local builds unprivileged and robust, this script installs ThunderTools
+#   into a user-writable prefix by default, and points subsequent CMake builds to
+#   that prefix's CMake Find*.cmake modules and generator binaries.
+#
+#   If you explicitly want the legacy shared prefix behavior (installing ThunderTools
+#   into ./install/usr), set:
+#     THUNDERTOOLS_INSTALL_MODE=shared
+#
+#   Otherwise (default):
+#     THUNDERTOOLS_INSTALL_MODE=user
 
 set -euo pipefail
 
@@ -35,21 +52,27 @@ usage() {
 run_l1_tests.sh [--no-build] [--no-test] [--no-coverage] [--with-valgrind] [--setup-files] [--install-packages] [--build-type <Debug|Release>]
 
 Environment variables:
-  GITHUB_WORKSPACE            Workspace root (default: script directory)
-  THUNDER_REF                 Thunder git ref (default: R4.4.1)
-  INTERFACES_REF              entservices-apis git ref (default: develop)
-  GOOGLETEST_REF              googletest git ref (default: v1.15.0)
+  GITHUB_WORKSPACE             Workspace root (default: script directory)
+  THUNDER_REF                  Thunder git ref (default: R4.4.1)
+  INTERFACES_REF               entservices-apis git ref (default: develop)
+  GOOGLETEST_REF               googletest git ref (default: v1.15.0)
 
-  BUILD_TYPE                  CMake build type (default: Debug)
-  TOOLCHAIN_FILE              Optional CMake toolchain file (default: empty)
+  BUILD_TYPE                   CMake build type (default: Debug)
+  TOOLCHAIN_FILE               Optional CMake toolchain file (default: empty)
 
-  ENABLE_PACKAGE_INSTALL       If "1", attempt apt install (default: 0)
-  ENABLE_SETUP_FILES           If "1", attempt to create CI-like filesystem nodes (default: 0)
-  ENABLE_VALGRIND              If "1", run valgrind pass (default: 0)
-  ENABLE_COVERAGE              If "1", generate lcov+genhtml report (default: 1)
+  ENABLE_PACKAGE_INSTALL        If "1", attempt apt install (default: 0)
+  ENABLE_SETUP_FILES            If "1", attempt to create CI-like filesystem nodes (default: 0)
+  ENABLE_VALGRIND               If "1", run valgrind pass (default: 0)
+  ENABLE_COVERAGE               If "1", generate lcov+genhtml report (default: 1)
 
-  CMAKE_GENERATOR              CMake generator (default: Ninja)
+  CMAKE_GENERATOR               CMake generator (default: Ninja)
 
+ThunderTools install behavior (local-permission safe):
+  THUNDERTOOLS_INSTALL_MODE     "user" (default) or "shared"
+                                - user: install ThunderTools into ./install_thundertools/usr
+                                        to avoid chmod/chown permission failures.
+                                - shared: install ThunderTools into ./install/usr (legacy/CI-like),
+                                          may fail in restricted environments.
 Outputs:
   ./rdkL1TestResultsWithoutValgrind.json
   ./rdkL1TestResultsWithValgrind.json (if valgrind run)
@@ -60,6 +83,7 @@ Examples:
   ./run_l1_tests.sh
   ENABLE_SETUP_FILES=1 ENABLE_VALGRIND=1 ./run_l1_tests.sh
   ./run_l1_tests.sh --no-coverage
+  THUNDERTOOLS_INSTALL_MODE=shared ./run_l1_tests.sh
 USAGE
 }
 
@@ -104,19 +128,54 @@ cmake_configure_build_install() {
   local src_dir="${1:?src_dir required}"
   local build_dir="${2:?build_dir required}"
   local install_prefix="${3:?install_prefix required}"
-  shift 3
+  local cmake_module_path="${4:?cmake_module_path required}"
+  shift 4
   local extra_args=("$@")
 
   cmake -G "${CMAKE_GENERATOR:-Ninja}" \
     -S "$src_dir" \
     -B "$build_dir" \
     -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$install_prefix/../tools/cmake" \
-    -DGENERIC_CMAKE_MODULE_PATH="$install_prefix/../tools/cmake" \
+    -DCMAKE_MODULE_PATH="$cmake_module_path" \
+    -DGENERIC_CMAKE_MODULE_PATH="$cmake_module_path" \
     "${extra_args[@]}"
 
   cmake --build "$build_dir" -j"$(nproc)"
   cmake --install "$build_dir"
+}
+
+###############################################################################
+# ThunderTools install-prefix selection (permission-safe default)
+###############################################################################
+
+# PUBLIC_INTERFACE
+compute_thundertools_prefixes() {
+  # Decide where to install ThunderTools and which module path to use.
+  #
+  # This avoids a known failure during `cmake --install`:
+  #   file INSTALL cannot set permissions on .../usr/sbin/ProxyStubGenerator
+  #
+  # Outputs (echo as "key=value" lines so caller can eval them safely):
+  #   THUNDERTOOLS_INSTALL_PREFIX=...
+  #   THUNDERTOOLS_MODULE_PATH=...
+  local workspace="${1:?workspace required}"
+
+  local mode="${THUNDERTOOLS_INSTALL_MODE:-user}"
+  local tt_install_prefix
+  local tt_module_path
+
+  if [[ "$mode" == "shared" ]]; then
+    tt_install_prefix="$workspace/install/usr"
+    tt_module_path="$tt_install_prefix/../tools/cmake"
+  else
+    # Default: isolate ThunderTools into a user-writable prefix.
+    # This prevents chmod/chown issues from affecting the rest of the build.
+    tt_install_prefix="$workspace/install_thundertools/usr"
+    tt_module_path="$tt_install_prefix/../tools/cmake"
+  fi
+
+  echo "THUNDERTOOLS_INSTALL_PREFIX=$tt_install_prefix"
+  echo "THUNDERTOOLS_MODULE_PATH=$tt_module_path"
 }
 
 ###############################################################################
@@ -412,25 +471,41 @@ build_all() {
   require_cmd patch
   require_cmd git
 
-  # CI uses python+jsonref for some tooling; local builds generally don't need it for compilation,
-  # but keep here as a hint if missing tools surface.
-  # require_cmd python3
-
   local install_prefix="$workspace/install/usr"
   mkdir -p "$install_prefix"
+
+  # Choose ThunderTools install prefix in a permission-safe way.
+  local thundertools_install_prefix=""
+  local thundertools_module_path=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDERTOOLS_INSTALL_PREFIX) thundertools_install_prefix="$v" ;;
+      THUNDERTOOLS_MODULE_PATH) thundertools_module_path="$v" ;;
+    esac
+  done < <(compute_thundertools_prefixes "$workspace")
+
+  mkdir -p "$thundertools_install_prefix" "$thundertools_module_path"
 
   log "Build type: $build_type"
   if [[ -n "$toolchain" ]]; then
     log "Toolchain file: $toolchain"
   fi
+  log "ThunderTools install mode: ${THUNDERTOOLS_INSTALL_MODE:-user}"
+  log "ThunderTools install prefix: $thundertools_install_prefix"
+  log "ThunderTools CMake module path: $thundertools_module_path"
 
   # ThunderTools
   log "Step: Build ThunderTools"
   cmake_configure_build_install \
     "$workspace/ThunderTools" \
     "$workspace/build/ThunderTools" \
-    "$install_prefix" \
+    "$thundertools_install_prefix" \
+    "$thundertools_module_path" \
     -DEXCEPTIONS_ENABLE=ON
+
+  # For the rest of the build, we continue to install runtime artifacts into ./install/usr,
+  # but point CMake to ThunderTools' Find*.cmake modules and tools from the user-writable prefix.
+  local cmake_module_path_for_rest="$thundertools_module_path"
 
   # Thunder
   log "Step: Build Thunder"
@@ -438,20 +513,20 @@ build_all() {
     "$workspace/Thunder" \
     "$workspace/build/Thunder" \
     "$install_prefix" \
+    "$cmake_module_path_for_rest" \
     -DMESSAGING=ON \
     -DBUILD_TYPE="$build_type" \
     -DBINDING=127.0.0.1 \
     -DPORT=55555 \
     -DEXCEPTIONS_ENABLE=ON
 
-  # entservices-apis (CI applies RDKEMW-1007 patch; we do not do it here because this repo
-  # already contains entservices-apis checkout and patch steps may require private repo access.
-  # If needed, users can clone entservices-testframework and patches will apply.)
+  # entservices-apis
   log "Step: Build entservices-apis"
   cmake_configure_build_install \
     "$workspace/entservices-apis" \
     "$workspace/build/entservices-apis" \
     "$install_prefix" \
+    "$cmake_module_path_for_rest" \
     -DEXCEPTIONS_ENABLE=ON
 
   # googletest
@@ -460,6 +535,7 @@ build_all() {
     "$workspace/googletest" \
     "$workspace/build/googletest" \
     "$install_prefix" \
+    "$cmake_module_path_for_rest" \
     -DBUILD_TYPE="$build_type" \
     -DBUILD_GMOCK=ON \
     -DBUILD_SHARED_LIBS=OFF \
@@ -503,7 +579,7 @@ build_all() {
     -DUSE_THUNDER_R4=ON \
     ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"} \
     -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$workspace/install/tools/cmake" \
+    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
     -DCMAKE_BUILD_TYPE="$build_type" \
     -DCMAKE_CXX_FLAGS="
 ${common_defines[*]}
@@ -522,7 +598,7 @@ ${coverage_flags[*]}
     -S "$workspace/entservices-appgateway" \
     -B "$workspace/build/entservices-appgateway" \
     -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$workspace/install/tools/cmake" \
+    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
     -DCMAKE_BUILD_TYPE="$build_type" \
     -DRDK_SERVICES_L1_TEST=ON \
     -DUSE_THUNDER_R4=ON \
@@ -547,7 +623,7 @@ ${coverage_flags[*]}
     -S "$workspace/entservices-testframework" \
     -B "$workspace/build/entservices-testframework" \
     -DCMAKE_INSTALL_PREFIX="$install_prefix" \
-    -DCMAKE_MODULE_PATH="$workspace/install/tools/cmake" \
+    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
     -DCMAKE_BUILD_TYPE="$build_type" \
     -DRDK_SERVICES_L1_TEST=ON \
     -DUSE_THUNDER_R4=ON \
