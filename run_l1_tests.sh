@@ -614,13 +614,57 @@ build_all() {
     -DEXCEPTIONS_ENABLE=ON
 
   # entservices-apis
+  #
+  # IMPORTANT:
+  #   entservices-apis generates code that includes Thunder interface headers like:
+  #     #include <interfaces/IAppManager.h>
+  #     #include <interfaces/entservices_errorcodes.h>
+  #
+  #   Those headers are provided by the *installed* Thunder (WPEFramework) prefix under:
+  #     <prefix>/include/WPEFramework/interfaces/...
+  #
+  #   If we don't point CMake at the Thunder install prefix, the build fails with:
+  #     fatal error: interfaces/IAppManager.h: No such file or directory
+  #
+  #   Additionally, previous builds have shown lots of:
+  #     cc1plus: warning: .../entservices-apis/apis/Module.cpp: not a directory
+  #   which happens when file paths accidentally end up in -I include-dir lists.
+  #
+  #   So here we:
+  #     1) Force config-mode discovery of WPEFramework via WPEFramework_DIR
+  #     2) Ensure CMAKE_PREFIX_PATH includes the Thunder install prefix
+  #     3) Provide explicit include roots for installed Thunder headers
   log "Step: Build entservices-apis"
+
+  # Thunder install prefix (may be separate from install/usr)
+  local thunder_install_prefix_local=""
+  local thunder_wpeframework_dir_local=""
+  while IFS='=' read -r k v; do
+    case "$k" in
+      THUNDER_INSTALL_PREFIX) thunder_install_prefix_local="$v" ;;
+      THUNDER_WPEFRAMEWORK_DIR) thunder_wpeframework_dir_local="$v" ;;
+    esac
+  done < <(compute_thunder_prefixes "$workspace")
+
+  # Belt-and-suspenders: export again in case build_all is invoked standalone.
+  export CMAKE_PREFIX_PATH="${thunder_install_prefix_local}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+  export WPEFramework_DIR="$thunder_wpeframework_dir_local"
+
+  # These are the include roots that ultimately provide <interfaces/...>:
+  #   <prefix>/include/WPEFramework/interfaces
+  # so the compiler must have <prefix>/include/WPEFramework on its include path.
+  local thunder_include_root="$thunder_install_prefix_local/include"
+  local thunder_wpeframework_include="$thunder_include_root/WPEFramework"
+
   cmake_configure_build_install \
     "$workspace/entservices-apis" \
     "$workspace/build/entservices-apis" \
     "$install_prefix" \
     "$cmake_module_path_for_rest" \
-    -DEXCEPTIONS_ENABLE=ON
+    -DEXCEPTIONS_ENABLE=ON \
+    -DWPEFramework_DIR="$thunder_wpeframework_dir_local" \
+    -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+    -DCMAKE_INCLUDE_PATH="$thunder_wpeframework_include;$thunder_include_root"
 
   # googletest
   log "Step: Build googletest"
