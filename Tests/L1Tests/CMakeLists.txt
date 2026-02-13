@@ -26,6 +26,7 @@ find_package(${NAMESPACE}Plugins REQUIRED)
 
 set (TEST_SRC
     tests/test_UtilsFile.cpp
+    tests/test_AppGateway.cpp
 )
 
 set (TEST_LIB

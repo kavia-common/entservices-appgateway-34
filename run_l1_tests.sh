@@ -582,14 +582,24 @@ run_tests() {
   local env_ld="LD_LIBRARY_PATH=$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
 
   log "Step: Run unit tests without valgrind"
-  (
-    export PATH="$install_usr/bin:${PATH}"
-    export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
-    export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
-    RdkServicesL1Test
-  )
-  cp -f "$(pwd)/rdkL1TestResults.json" "$workspace/rdkL1TestResultsWithoutValgrind.json"
-  rm -f "$(pwd)/rdkL1TestResults.json"
+
+  # Prefer the canonical L1 runner binary if available (CI parity).
+  if command -v RdkServicesL1Test >/dev/null 2>&1; then
+    (
+      export PATH="$install_usr/bin:${PATH}"
+      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+      export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+      RdkServicesL1Test
+    )
+    cp -f "$(pwd)/rdkL1TestResults.json" "$workspace/rdkL1TestResultsWithoutValgrind.json"
+    rm -f "$(pwd)/rdkL1TestResults.json"
+  else
+    warn "RdkServicesL1Test not found on PATH; falling back to ctest on build tree."
+    (
+      export LD_LIBRARY_PATH="$install_usr/lib:$install_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+      ctest --test-dir "$workspace/build/entservices-appgateway" --output-on-failure
+    )
+  fi
 
   if [[ "${ENABLE_VALGRIND:-0}" == "1" ]]; then
     require_cmd valgrind
