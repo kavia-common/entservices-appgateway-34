@@ -10,6 +10,8 @@ The second way is the host-shell script `run_l1_tests.sh`, which is designed for
 
 This document summarizes what the workflow does that the script does not, with special attention to coverage generation.
 
+For a coverage-oriented checklist of AppGateway test cases (derived from the reference L1Tests style and mapped to the current AppGateway plugin code), see `docs/appgateway-l1tests-mapping.md`.
+
 ## High-level summary of differences
 
 The GitHub Actions workflow is a full environment provisioning and multi-repo build pipeline. It installs OS packages, clones dependencies, builds Thunder/ThunderTools/googletest, builds mocks, builds `entservices-appgateway`, builds `entservices-testframework`, runs `RdkServicesL1Test` twice (with and without valgrind), generates coverage using `lcov`/`genhtml`, and uploads artifacts.
