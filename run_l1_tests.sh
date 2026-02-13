@@ -7,11 +7,17 @@
 #
 # It will:
 #   - Ensure required repos are present (Thunder/ThunderTools/entservices-apis/googletest/trower-base64)
-#   - Apply patches to ThunderTools and Thunder (as CI)
+#   - Apply patches to ThunderTools and Thunder (as CI) [only if entservices-testframework is present]
 #   - Build dependencies (ThunderTools, Thunder, entservices-apis, googletest)
-#   - Build mocks, entservices-appgateway, and entservices-testframework
-#   - Run RdkServicesL1Test
+#   - Build entservices-appgateway (from repo root)
+#   - Run RdkServicesL1Test (or fall back to ctest)
 #   - Generate coverage report via lcov/genhtml (HTML in ./coverage/)
+#
+# Minimal AppGateway-only L1 coverage path:
+#   This script defaults to MINIMAL_L1=1 and skips:
+#     - entservices-testframework build/install
+#     - mocks build (often requires host deps like gstreamer/libdrm/curl)
+#   This is intentional to keep AppGateway L1 coverage runnable in constrained CI images.
 #
 # Notes:
 #   - Some CI steps require root (apt install, /dev nodes, various /opt paths).
