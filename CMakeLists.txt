@@ -25,9 +25,12 @@ project(entservices-appgateway LANGUAGES C CXX)
 # are located in the cmake directory. Include it in the search.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
-# Make repo-bundled WPEFramework/Thunder "tooling" find-modules available (e.g. FindConfigGenerator.cmake).
+# Make repo-bundled WPEFramework/Thunder "tooling" find-modules available (e.g. FindConfigGenerator.cmake,
+# FindProxyStubGenerator.cmake). Some environments install ThunderTools into install_thundertools/ to avoid
+# permission issues; include both locations so `find_package(ProxyStubGenerator)` works.
 # L1/L2 test CMakeLists call `write_config()` which is defined by FindConfigGenerator.cmake.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/install/tools/cmake")
+list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/install_thundertools/tools/cmake")
 
 # Host-shell / CI convenience:
 # Prefer the repo-bundled WPEFramework CMake package when available (install/usr/lib/cmake/WPEFramework/...)
@@ -61,6 +64,10 @@ include(CmakeHelperFunctions)
 
 # Provides the `write_config()` CMake function used by Tests/L1Tests and the testframework.
 find_package(ConfigGenerator REQUIRED)
+
+# ProxyStubGenerator is used by Thunder/WPEFramework build tooling to generate proxy/stub code.
+# It is provided by ThunderTools and typically found via FindProxyStubGenerator.cmake.
+find_package(ProxyStubGenerator REQUIRED)
 
 if(RDK_SERVICE_L2_TEST)
     add_subdirectory(Tests/L2Tests)
