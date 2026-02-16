@@ -23,6 +23,17 @@ The second way is to use the repo-provided host-shell runner `run_l1_tests.sh`. 
 
 For a detailed comparison (including the exact LCOV commands the workflow runs), see `docs/l1-workflow-vs-runner.md`.
 
+## Note: L1 test execution model (runner/plugin model, no per-plugin `main`)
+
+Many Thunder/WPEFramework plugin L1 test suites (e.g., NetworkManager L1 in the broader ecosystem) are **not** built as standalone `gtest` executables with their own `main()`. Instead, they are typically built as a **shared library** (a “test plugin”) and loaded by a central runner (commonly `RdkServicesL1Test` from `entservices-testframework`).
+
+In that model:
+- each repo builds a `lib...L1Tests....so` that contains the test translation units and registers tests via normal `TEST(...)` macros
+- the runner provides the only `main()` and initializes gtest/gmock
+- the runner dynamically loads the per-plugin test `.so` files so all tests become discoverable/executable in a single process
+
+This repo also includes a lightweight fallback for local runs via `ctest` (see `run_l1_tests.sh`), which can execute a standalone test binary when the full external runner is not present.
+
 ```
 1. checkout the entservices-<repo-name> to your working directory in your build machine.
 example: git clone https://github.com/rdkcentral/entservices-deviceanddisplay.git

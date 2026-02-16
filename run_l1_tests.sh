@@ -1051,7 +1051,6 @@ generate_coverage() {
     '*/install/usr/include/*' \
     '*/Tests/headers/*' \
     '*/Tests/mocks/*' \
-    '*/Tests/L1Tests/mocks/*' \
     '*/Tests/L1Tests/tests/*' \
     '*/Thunder/*' \
     -o filtered_coverage.info

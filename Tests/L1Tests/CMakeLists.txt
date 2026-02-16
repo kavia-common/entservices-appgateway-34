@@ -101,14 +101,14 @@ target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
 # IMPORTANT:
 # Do NOT depend on external `entservices-testframework` include paths.
-# Instead, use locally vendored mocks under Tests/L1Tests/mocks/.
+# Instead, use locally vendored mocks under Tests/mocks/.
 target_include_directories(${MODULE_NAME}
     PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
         ${TEST_INC}
-        ${CMAKE_CURRENT_SOURCE_DIR}/mocks
-        ${CMAKE_CURRENT_SOURCE_DIR}/mocks/thunder
+        ${CMAKE_CURRENT_SOURCE_DIR}/../mocks
+        ${CMAKE_CURRENT_SOURCE_DIR}/../mocks/thunder
 )
 
 target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
@@ -142,8 +142,8 @@ add_executable(AppGatewayL1Tests
 target_include_directories(AppGatewayL1Tests
     PRIVATE
         ${TEST_INC}
-        ${CMAKE_CURRENT_SOURCE_DIR}/mocks
-        ${CMAKE_CURRENT_SOURCE_DIR}/mocks/thunder
+        ${CMAKE_CURRENT_SOURCE_DIR}/../mocks
+        ${CMAKE_CURRENT_SOURCE_DIR}/../mocks/thunder
 )
 
 # AppGateway plugin contains Resolver.cpp (symbols required by test_AppGateway.cpp).
