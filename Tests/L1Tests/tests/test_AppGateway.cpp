@@ -19,11 +19,11 @@
 
 #include <gtest/gtest.h>
 
+#include <cstdio>
 #include <fstream>
 #include <string>
 
 #include "Module.h"
-
 #include "Resolver.h"
 
 using namespace WPEFramework;
@@ -36,6 +36,8 @@ static constexpr const char* kTmpInvalid = "/tmp/appgw_resolver_invalid.json";
 static constexpr const char* kTmpNoResolutions = "/tmp/appgw_resolver_no_resolutions.json";
 static constexpr const char* kTmpCfg1 = "/tmp/appgw_resolver_cfg1.json";
 static constexpr const char* kTmpCfg2 = "/tmp/appgw_resolver_cfg2.json";
+static constexpr const char* kTmpFlags = "/tmp/appgw_resolver_flags.json";
+static constexpr const char* kTmpExtra = "/tmp/appgw_resolver_extra.json";
 
 static void WriteTextFile(const std::string& path, const std::string& contents)
 {
@@ -52,11 +54,14 @@ static void WriteTextFile(const std::string& path, const std::string& contents)
  *
  * These tests are intentionally independent of Thunder PluginHost runtime and
  * external mock headers (ServiceMock, etc.). This makes them robust for this
- * repo snapshot and still yields meaningful coverage for resolver/config logic.
+ * repository and still yields meaningful coverage for resolver/config logic.
  */
 
 TEST(AppGatewayResolverTest, Resolver_LoadConfig_MissingFile_ReturnsFalse)
 {
+    // Ensure the file does not exist.
+    std::remove(kTmpMissing);
+
     // Note: Passing nullptr shell is safe for LoadConfig/ResolveAlias/etc. as long as we
     // don't call CallThunderPlugin which requires a shell.
     Resolver resolver(nullptr);
@@ -130,8 +135,7 @@ TEST(AppGatewayResolverTest, Resolver_LoadConfig_EventAndComRpcFlags_AndIncludeC
     // - HasEvent: event string non-empty
     // - HasComRpcRequestSupport explicit true
     // - additionalContext object -> default includeContext/useComRpc should become true
-    const char* cfg = "/tmp/appgw_resolver_flags.json";
-    WriteTextFile(cfg, R"json(
+    WriteTextFile(kTmpFlags, R"json(
         {
           "resolutions": {
             "event.method": {
@@ -150,7 +154,7 @@ TEST(AppGatewayResolverTest, Resolver_LoadConfig_EventAndComRpcFlags_AndIncludeC
         }
     )json");
 
-    ASSERT_TRUE(resolver.LoadConfig(cfg));
+    ASSERT_TRUE(resolver.LoadConfig(kTmpFlags));
     EXPECT_TRUE(resolver.IsConfigured());
 
     EXPECT_TRUE(resolver.HasEvent("event.method"));
@@ -167,4 +171,113 @@ TEST(AppGatewayResolverTest, Resolver_LoadConfig_EventAndComRpcFlags_AndIncludeC
 
     // Also sanity: resolving by different case
     EXPECT_TRUE(resolver.HasComRpcRequestSupport("COMRPC.DERIVED"));
+}
+
+TEST(AppGatewayResolverTest, Resolver_HasIncludeContext_PopulatesAdditionalContext)
+{
+    Resolver resolver(nullptr);
+
+    // Covers:
+    // - ExtractAdditionalContext + hasAdditionalContext detection
+    // - includeContext defaulting to true when additionalContext is OBJECT
+    // - HasIncludeContext returning includeContext and copying additionalContext back to caller
+    WriteTextFile(kTmpExtra, R"json(
+        {
+          "resolutions": {
+            "ctx.defaulttrue": {
+              "alias": "org.rdk.SomeComRpcHandler",
+              "additionalContext": { "k": "v" }
+            },
+            "ctx.explicitfalse": {
+              "alias": "org.rdk.SomeComRpcHandler",
+              "includeContext": false,
+              "additionalContext": { "k": "v2" }
+            }
+          }
+        }
+    )json");
+
+    ASSERT_TRUE(resolver.LoadConfig(kTmpExtra));
+    EXPECT_TRUE(resolver.IsConfigured());
+
+    {
+        JsonValue additional;
+        EXPECT_TRUE(resolver.HasIncludeContext("ctx.defaulttrue", additional));
+        EXPECT_TRUE(additional.IsSet());
+        EXPECT_EQ(additional.Content(), Core::JSON::Variant::type::OBJECT);
+    }
+
+    {
+        JsonValue additional;
+        EXPECT_FALSE(resolver.HasIncludeContext("ctx.explicitfalse", additional));
+        EXPECT_TRUE(additional.IsSet());
+        EXPECT_EQ(additional.Content(), Core::JSON::Variant::type::OBJECT);
+    }
+
+    {
+        JsonValue additional;
+        EXPECT_FALSE(resolver.HasIncludeContext("no.such.key", additional));
+        EXPECT_FALSE(additional.IsSet());
+    }
+}
+
+TEST(AppGatewayResolverTest, Resolver_HasPermissionGroup_ReturnsGroup)
+{
+    Resolver resolver(nullptr);
+
+    WriteTextFile(kTmpExtra, R"json(
+        {
+          "resolutions": {
+            "perm.method": {
+              "alias": "org.rdk.SomePlugin.someMethod",
+              "permissionGroup": "pg.test"
+            },
+            "perm.empty": {
+              "alias": "org.rdk.SomePlugin.someMethod",
+              "permissionGroup": ""
+            }
+          }
+        }
+    )json");
+
+    ASSERT_TRUE(resolver.LoadConfig(kTmpExtra));
+    EXPECT_TRUE(resolver.IsConfigured());
+
+    std::string group;
+    EXPECT_TRUE(resolver.HasPermissionGroup("perm.method", group));
+    EXPECT_EQ(group, "pg.test");
+
+    group.clear();
+    EXPECT_FALSE(resolver.HasPermissionGroup("perm.empty", group));
+
+    group.clear();
+    EXPECT_FALSE(resolver.HasPermissionGroup("perm.missing", group));
+}
+
+TEST(AppGatewayResolverTest, Resolver_ClearResolutions_ClearsConfiguredState)
+{
+    Resolver resolver(nullptr);
+
+    WriteTextFile(kTmpCfg1, R"json(
+        {
+          "resolutions": {
+            "a": { "alias": "org.rdk.One.method" }
+          }
+        }
+    )json");
+    ASSERT_TRUE(resolver.LoadConfig(kTmpCfg1));
+    EXPECT_TRUE(resolver.IsConfigured());
+
+    resolver.ClearResolutions();
+    EXPECT_FALSE(resolver.IsConfigured());
+    EXPECT_EQ(resolver.ResolveAlias("a"), "");
+    EXPECT_FALSE(resolver.HasEvent("a"));
+}
+
+TEST(AppGatewayResolverTest, Resolver_CallThunderPlugin_NullShell_ReturnsError)
+{
+    Resolver resolver(nullptr);
+
+    std::string response;
+    EXPECT_EQ(resolver.CallThunderPlugin("org.rdk.SomePlugin.someMethod", "{}", response), Core::ERROR_GENERAL);
 }

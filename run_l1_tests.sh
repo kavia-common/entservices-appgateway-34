@@ -1027,12 +1027,18 @@ generate_coverage() {
   require_cmd lcov
   require_cmd genhtml
 
-  local lcovrc="$workspace/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
+  # Prefer this repo's lcovrc so coverage generation does not depend on
+  # entservices-testframework being present in the workspace.
+  local lcovrc="$workspace/Tests/L1Tests/.lcovrc_l1"
+  local lcovrc_tf="$workspace/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
   if [[ -f "$lcovrc" ]]; then
-    log "Using lcovrc from testframework: $lcovrc"
+    log "Using repo lcovrc: $lcovrc"
     cp "$lcovrc" "$HOME/.lcovrc"
+  elif [[ -f "$lcovrc_tf" ]]; then
+    log "Using lcovrc from testframework: $lcovrc_tf"
+    cp "$lcovrc_tf" "$HOME/.lcovrc"
   else
-    warn "lcovrc not found at $lcovrc; continuing without it"
+    warn "No lcovrc found (checked: $lcovrc, $lcovrc_tf); continuing without it"
   fi
 
   log "Step: Generate coverage (lcov + genhtml)"
@@ -1045,6 +1051,7 @@ generate_coverage() {
     '*/install/usr/include/*' \
     '*/Tests/headers/*' \
     '*/Tests/mocks/*' \
+    '*/Tests/L1Tests/mocks/*' \
     '*/Tests/L1Tests/tests/*' \
     '*/Thunder/*' \
     -o filtered_coverage.info

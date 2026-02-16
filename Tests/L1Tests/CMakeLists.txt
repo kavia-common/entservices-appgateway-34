@@ -23,17 +23,22 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(${NAMESPACE}Plugins REQUIRED)
+find_package(Threads REQUIRED)
 
-set (TEST_SRC
+set(TEST_SRC
     tests/test_UtilsFile.cpp
     tests/test_AppGateway.cpp
 )
 
-set (TEST_LIB
+set(TEST_LIB
     ${NAMESPACE}Plugins::${NAMESPACE}Plugins
 )
 
-set (TEST_INC ../../helpers)
+# Include the code-under-test headers (Resolver, Module, helpers)
+set(TEST_INC
+    ../../helpers
+    ../../AppGateway
+)
 
 #########################################################################################
 # add_plugin_test_ex: Macro to add plugin tests, it will append to TEST_SRC, TEST_INC,
@@ -41,29 +46,6 @@ set (TEST_INC ../../helpers)
 #                     arg1: test file list as **string**
 #                     arg2: include dir list as **string**
 #                     arg3: plugin libs to link list as **string**
-#
-# sample invocation : 
-#    add_plugin_test_ex(PLUGIN_NAME
-#                       "test/file1.cpp;test/file2.cpp"
-#                       "../../inc_dir1;../../inc_dir2"
-#                       "${NAMESPACE}PluginName;${NAMESPACE}PluginNameImplementation")
-# ----------------------------------------- OR ------------------------------------------
-# list(APPEND PLUGIN_NAME_SRC test/file1.cpp)
-# list(APPEND PLUGIN_NAME_SRC test/file2.cpp)
-#
-# list(APPEND PLUGIN_NAME_INC ../../inc_dir1)
-# list(APPEND PLUGIN_NAME_INC ../../inc_dir2)
-#
-# list(APPEND PLUGIN_NAME_LIB ${NAMESPACE}PluginName)
-# list(APPEND PLUGIN_NAME_LIB ${NAMESPACE}PluginNameImplementation)
-#
-#    add_plugin_test_ex(PLUGIN_NAME
-#                       "${PLUGIN_NAME_SRC}"
-#                       "${PLUGIN_NAME_INC}"
-#                       "${PLUGIN_NAME_LIB}")
-#
-# NOTE: Alternatively test can choose to update `TEST_SRC`, `TEST_INC` & `TEST_LIB`
-#       directly (like in the case of Miracast)
 #########################################################################################
 macro(add_plugin_test_ex plugin_opt plugin_test_sources_str plugin_includes_str plugin_libs_str)
     # Check if the plugin option is enabled
@@ -102,33 +84,75 @@ macro(add_plugin_test plugin_name test_files)
     add_plugin_test_ex(${plugin_opt} "${test_files}" "../../${plugin_name}" "${NAMESPACE}${plugin_name}")
 endmacro()
 
+# Shared library form (CI/testframework parity). This can still be used by an external runner.
 add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
-if (RDK_SERVICES_L1_TEST)
+if(RDK_SERVICES_L1_TEST)
     target_link_options(${MODULE_NAME} PRIVATE "-Wl,-wrap,opendir")
-endif (RDK_SERVICES_L1_TEST)
+endif()
 
-include_directories(${TEST_INC})
-
-target_link_directories(${MODULE_NAME} PUBLIC ${CMAKE_INSTALL_PREFIX}/lib ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins)
+target_link_directories(${MODULE_NAME}
+    PUBLIC
+        ${CMAKE_INSTALL_PREFIX}/lib
+        ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+)
 
 target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
+# IMPORTANT:
+# Do NOT depend on external `entservices-testframework` include paths.
+# Instead, use locally vendored mocks under Tests/L1Tests/mocks/.
 target_include_directories(${MODULE_NAME}
-        PUBLIC
+    PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
-        ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks
-        ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/devicesettings
-        ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/thunder
-        ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
-        )
+        ${TEST_INC}
+        ${CMAKE_CURRENT_SOURCE_DIR}/mocks
+        ${CMAKE_CURRENT_SOURCE_DIR}/mocks/thunder
+)
 
 target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
-
-#install(TARGETS ${PROJECT_NAME} DESTINATION bin)
 
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
 write_config(PLUGINS ${PLUGIN_NAME})
 
+# -----------------------------------------------------------------------------
+# Standalone L1 test runner (no entservices-testframework / no RdkServicesL1Test)
+# -----------------------------------------------------------------------------
+#
+# This executable enables `ctest` to run L1 tests in minimal environments.
+# It links directly against gtest and the AppGateway plugin (code under test).
+#
+# NOTE:
+# We intentionally compile the same test sources into this executable so the
+# linker cannot drop them under --as-needed.
+#
+# This does not replace the shared-library-based flow used by the upstream
+# testframework runner, it complements it.
+find_library(GTEST_LIB NAMES gtest libgtest.a PATHS ${CMAKE_INSTALL_PREFIX}/lib)
+if(NOT GTEST_LIB)
+    message(FATAL_ERROR "gtest library not found under ${CMAKE_INSTALL_PREFIX}/lib (expected libgtest.a).")
+endif()
 
+add_executable(AppGatewayL1Tests
+    tests/l1_main.cpp
+    ${TEST_SRC}
+)
+
+target_include_directories(AppGatewayL1Tests
+    PRIVATE
+        ${TEST_INC}
+        ${CMAKE_CURRENT_SOURCE_DIR}/mocks
+        ${CMAKE_CURRENT_SOURCE_DIR}/mocks/thunder
+)
+
+# AppGateway plugin contains Resolver.cpp (symbols required by test_AppGateway.cpp).
+target_link_libraries(AppGatewayL1Tests
+    PRIVATE
+        ${TEST_LIB}
+        ${NAMESPACE}AppGateway
+        Threads::Threads
+        ${GTEST_LIB}
+)
+
+add_test(NAME AppGatewayL1Tests COMMAND AppGatewayL1Tests)

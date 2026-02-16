@@ -1,173 +1,114 @@
-# AppGateway L1Tests Mapping (from reference `code_ref/Tests/L1Tests/tests`)
+# AppGateway L1Tests Mapping (coverage-oriented)
 
 ## Purpose and scope
 
-This document maps the reference L1 test style found in `code_ref/Tests/L1Tests/tests` to concrete, coverage-oriented L1 test cases for the AppGateway plugin in this repository (`entservices-appgateway-34`). The goal is to maximize AppGateway coverage by enumerating the specific branches and behaviors present in the current AppGateway implementation and by describing what a test must set up, call, and assert.
+This document maps L1 test patterns (as seen in `code_ref/Tests/L1Tests/tests`) to concrete, coverage-oriented L1 test cases for the AppGateway plugin in this repository (`entservices-appgateway-34`).
 
-This mapping is intentionally code-driven. Every recommended test case is derived from what the current AppGateway implementation actually does. The mapping is also pattern-driven: it adapts the established conventions in the reference L1 suite (interface setup via callsign lookup, JSON-RPC registration checks via `handler.Exists`, end-to-end JSON-RPC calls via `handler.Invoke`, and event verification via `EVENT_SUBSCRIBE` and `service->Submit` interception).
+Primary goals:
 
-## Current L1 test cases in this repository (and coverage)
+- Increase **AppGateway/Resolver** coverage with tests that are deterministic and runnable in constrained environments.
+- Keep L1 tests runnable **without a compile-time dependency on `entservices-testframework`** by vendoring the minimal required mock/dependency headers under:
+  - `Tests/L1Tests/mocks/**` (segregated by functionality).
 
-The `Tests/L1Tests` target in this repository currently builds a single test file, `Tests/L1Tests/tests/test_UtilsFile.cpp`, into the `L1TestsIN` shared library (see `Tests/L1Tests/CMakeLists.txt`). The table below lists the concrete test cases that exist today, and what they cover.
+## Current L1 test files in this repository
 
-| Test suite / case | Location | Type | Primary code under test | Coverage details (what it actually exercises) | Notes / gaps |
-|---|---|---|---|---|---|
-| `UtilsFileTest.createFolder_createFile_moveFile_verifyFile` | `Tests/L1Tests/tests/test_UtilsFile.cpp` | Unit-style (filesystem) | `helpers/UtilsFile.h` (and `WPEFramework::Core::Directory`, `WPEFramework::Core::File`) | Creates and destroys `/tmp/UtilsFileTest`, creates a file, writes bytes, uses `Utils::MoveFile(...)` to move into a nested destination path, and verifies file existence and contents after move. | This test improves coverage for helper filesystem utilities but does not directly cover AppGateway, Resolver, notifications, or WebSocket behavior. |
+These are compiled under `Tests/L1Tests/tests`:
 
-## Reference L1Tests suite patterns (what the reference teaches)
+- `test_UtilsFile.cpp` – filesystem helper coverage (`helpers/UtilsFile.h`)
+- `test_AppGateway.cpp` – Resolver/config coverage (`AppGateway/Resolver.*`)
 
-The reference suite under `code_ref/Tests/L1Tests/tests` contains multiple plugin tests (for example `test_AppManager.cpp`, `test_UserSettings.cpp`, `test_LifecycleManager.cpp`, `test_MessageControl.cpp`, `test_RDKShell.cpp`, and `test_UtilsFile.cpp`). These files demonstrate repeatable patterns that are directly applicable to AppGateway.
+## Reference L1 patterns (from `code_ref/Tests/L1Tests/tests`)
 
-### Pattern 1: “Registered methods” checks (JSON-RPC surface verification)
+The reference suite demonstrates patterns that can be applied to AppGateway:
 
-Several reference tests start by asserting that a plugin exposes all expected JSON-RPC methods through `Core::JSONRPC::Handler::Exists`, for example:
+1. **Registered methods checks** via `Core::JSONRPC::Handler::Exists`
+2. **JSON-RPC Invoke assertions** via `handler.Invoke(...)`
+3. **Callsign-based dependency injection** via `ServiceMock::QueryInterfaceByCallsign(...)`
+4. **Event subscription/payload verification** via `EVENT_SUBSCRIBE` and `service->Submit(...)`
+5. **File-driven tests** for deterministic config parsing behavior
 
-In `test_AppManager.cpp`, `RegisteredMethodsUsingJsonRpcSuccess` checks methods like `getInstalledApps`, `launchApp`, `preloadApp`, `closeApp`, and others.
+For AppGateway, the highest value “easy coverage” is in **Resolver** and **config-driven branching**. Deeper coverage of `AppGatewayImplementation` requires a Thunder-style `IShell` mock and additional interface mocks (AppNotifications, Authenticator, RequestHandler), which are not always available in minimal environments.
 
-In `test_UserSettings.cpp`, `RegisteredMethods` checks a long list of `set*` and `get*` methods.
+## Important note: no entservices-testframework compile-time dependency
 
-In `test_RDKShell.cpp`, `RegisteredMethods` enumerates many JSON-RPC methods.
+Historically, L1 test builds used include paths pointing at:
 
-This pattern is valuable because it gives broad, low-effort coverage of the JSON-RPC registration layer and will quickly reveal missing or renamed methods.
+- `../entservices-testframework/Tests/mocks/**`
 
-### Pattern 2: JSON-RPC Invoke with explicit request/response assertions
+This repository now vendors the minimal required headers into:
 
-The reference suite frequently uses `handler.Invoke(connection, "method", requestJson, response)` and asserts:
+- `Tests/L1Tests/mocks/thunder/**` (e.g., `ThunderPortability.h`)
 
-That the return code matches expectations (`Core::ERROR_NONE`, `Core::ERROR_GENERAL`, `Core::ERROR_INVALID_PARAMETER`, and so on).
+This allows `Tests/L1Tests/CMakeLists.txt` to remove include-path references to `entservices-testframework` while still compiling tests like `test_UtilsFile.cpp` that include `ThunderPortability.h`.
 
-That the response JSON string matches exactly, or contains specific substrings.
+## Running the tests locally
 
-For example, `test_AppManager.cpp` asserts exact JSON event payloads that are emitted via `service->Submit`.
+### Via the repo runner (`run_l1_tests.sh`)
 
-### Pattern 3: COM-RPC and callsign-based dependency injection
+`run_l1_tests.sh` builds the repo with `-DRDK_SERVICES_L1_TEST=ON` and will run tests:
 
-The reference tests often simulate the Thunder runtime dependency graph by providing a `ServiceMock` and configuring `QueryInterfaceByCallsign` to return specific interface mocks based on callsign and requested interface ID.
+- Prefer `RdkServicesL1Test` (CI parity) if present
+- Otherwise fallback to `ctest`
 
-For example, `test_AppManager.cpp` uses `QueryInterfaceByCallsign` to return mocks for:
+To ensure the fallback path actually executes tests without `RdkServicesL1Test`, this repo now also builds a standalone gtest binary:
 
-- `org.rdk.LifecycleManager` (ILifecycleManager / ILifecycleManagerState)
-- `org.rdk.PersistentStore` (IStore2)
-- `org.rdk.StorageManager`
-- `org.rdk.PackageManagerRDKEMS` (IPackageHandler / IPackageInstaller)
+- `AppGatewayL1Tests` (registered with `add_test(...)`)
 
-The AppGateway plugin uses the same style of callsign lookup for AppNotifications, request handlers, and authenticators. Tests should mimic this reference approach.
+So `ctest` runs real tests and coverage `.gcda` files are produced.
 
-### Pattern 4: Event subscription and event payload verification
+## AppGateway code under test (current focus)
 
-The reference `test_AppManager.cpp` uses the macros `EVENT_SUBSCRIBE` / `EVENT_UNSUBSCRIBE` and intercepts event payloads via `EXPECT_CALL(*mServiceMock, Submit(...))` to verify that emitted JSON matches an expected string, such as:
+- Resolver/config parsing and lookup:
+  - `AppGateway/Resolver.cpp`
+  - `AppGateway/Resolver.h`
 
-- `org.rdk.AppManager.onAppLaunchRequest`
-- `org.rdk.AppManager.onAppLifecycleStateChanged`
+Secondary (future expansion, requires additional mocks):
 
-For AppGateway, this pattern is directly relevant for two areas:
+- `AppGateway/AppGatewayImplementation.cpp` (event handling, COM-RPC routing, permission checks)
+- `AppGateway/AppGatewayResponderImplementation.cpp` (WebSocket auth/dispatch/cleanup)
 
-Event-style “listen” subscriptions (AppGatewayImplementation routes “event” methods to AppNotifications subscription).
+## Tier A: Implemented now (no Thunder runtime required)
 
-WebSocket responder connection status notifications (AppGatewayResponderImplementation submits notifications via jobs).
+These tests live in `Tests/L1Tests/tests/test_AppGateway.cpp` and focus on `Resolver` behavior:
 
-### Pattern 5: Self-contained file-based testing for config parsing and filesystem utilities
+| S.No | Test case | Code paths / branches targeted | Key assertions |
+|---:|---|---|---|
+| 1 | `Resolver_LoadConfig_MissingFile_ReturnsFalse` | `LoadConfig`: file open failure | returns `false`, `IsConfigured()==false` |
+| 2 | `Resolver_LoadConfig_InvalidJson_ReturnsFalse` | `LoadConfig`: JSON parse failure | returns `false`, `IsConfigured()==false` |
+| 3 | `Resolver_LoadConfig_MissingResolutionsObject_ReturnsFalse` | `LoadConfig`: missing `"resolutions"` branch | returns `false` |
+| 4 | `Resolver_LoadConfig_LowercasesKeysAndOverrides` | key normalization + override semantics | resolves lowercased key, later config overrides |
+| 5 | `Resolver_LoadConfig_EventAndComRpcFlags_AndIncludeContextDefaults` | `HasEvent`, `HasComRpcRequestSupport`, defaulting based on `additionalContext` object | event true/false as expected; COM-RPC support derived |
+| 6 | `Resolver_HasIncludeContext_PopulatesAdditionalContext` | `includeContext` defaulting + `HasIncludeContext` copying additionalContext | includeContext bool matches expected; returned additionalContext is set and object |
+| 7 | `Resolver_HasPermissionGroup_ReturnsGroup` | `permissionGroup` parsing + `HasPermissionGroup` | permissionGroup returned; empty/missing returns false |
+| 8 | `Resolver_ClearResolutions_ClearsConfiguredState` | `ClearResolutions` and post-clear behavior | `IsConfigured()==false`, lookup returns empty |
+| 9 | `Resolver_CallThunderPlugin_NullShell_ReturnsError` | `CallThunderPlugin`: null-shell error path | returns `Core::ERROR_GENERAL` |
 
-`test_UtilsFile.cpp` illustrates a “real filesystem” approach using `/tmp` and verifying observable outcomes (file exists, bytes match). This is an excellent match for AppGateway’s resolver/config behavior because the resolver loads JSON configs from paths, and L1 tests can write temporary config JSON under `/tmp` to trigger branches deterministically.
+## Tier B: Deferred (requires more mocks / runtime simulation)
 
-## AppGateway code under test (what we are mapping to)
+These cover `AppGatewayImplementation` branches but typically require:
 
-This mapping targets the following AppGateway implementation files:
+- `ServiceMock` with `QueryInterfaceByCallsign` routing
+- `Exchange::IAppNotifications` mock for subscribe/cleanup
+- `Exchange::IAppGatewayAuthenticator` mock for permission group checks
+- `Exchange::IAppGatewayRequestHandler` mock for COM-RPC routing
 
-Plugin wrapper behavior in `AppGateway/AppGateway.cpp` and `AppGateway/AppGateway.h`.
+Examples of deferred tests:
 
-Request routing and configuration in `AppGateway/AppGatewayImplementation.cpp`.
-
-Resolution parsing and Thunder invocation in `AppGateway/Resolver.cpp`.
-
-WebSocket/authentication/dispatch logic in `AppGateway/AppGatewayResponderImplementation.cpp`.
-
-Method classification inputs in `AppGateway/resolutions/resolution.base.json`.
-
-## Proposed AppGateway-focused L1 tests (coverage-oriented mapping)
-
-These are the L1 test cases that should be added to expand AppGateway coverage. They are written to align with the reference suite patterns, and each one points to specific branches/behaviors in the current implementation.
-
-### Important note about this repository snapshot (pragmatic coverage)
-
-In this repository snapshot, the AppGateway-oriented mock headers typically provided by `entservices-testframework` (e.g., `ServiceMock.h`, `AppNotificationsMock.h`) are **not present** in the workspace, even though `Tests/L1Tests/CMakeLists.txt` references them in include paths.
-
-Therefore this mapping is split into:
-
-- **Tier A (Implemented now):** Tests that require *no* Thunder runtime, no callsign injection, and no external mocks. These give immediate, reliable coverage.
-- **Tier B (Deferred until mocks are available):** Tests that require `ServiceMock` + `QueryInterfaceByCallsign` dependency injection to reach event subscription / COM-RPC / permission branches.
-
-### Proposed test case table (Tier A: implemented in this change)
-
-| S.No | Proposed test case | Component(s) | Code paths / branches targeted | Setup pattern | Key assertions / observable outcomes |
-|---:|---|---|---|---|---|
-| 1 | `Resolver_LoadConfig_MissingFile_ReturnsFalse` | `Resolver` | `Resolver::LoadConfig`: file open failure (`!file.is_open()`) | Create `Resolver(nullptr)` (safe for LoadConfig/ResolveAlias); call `LoadConfig("/tmp/does-not-exist.json")` | Returns `false`. `IsConfigured()` remains `false`. |
-| 2 | `Resolver_LoadConfig_InvalidJson_ReturnsFalse` | `Resolver` | `Resolver::LoadConfig`: parse failure (`!FromString(...)`) | Write invalid JSON to `/tmp` and load | Returns `false`. `IsConfigured()` remains `false`. |
-| 3 | `Resolver_LoadConfig_MissingResolutionsObject_ReturnsFalse` | `Resolver` | `Resolver::LoadConfig`: `!config.Resolutions.IsSet()` branch | Write `{ "notResolutions": {} }` | Returns `false`. |
-| 4 | `Resolver_LoadConfig_LowercasesKeysAndOverrides` | `Resolver` | Key normalization; override behavior | Load config1 with `MiXeDKey`, then config2 overriding same key | `ResolveAlias("mixedkey")` returns overridden alias from config2. |
-| 5 | `Resolver_LoadConfig_EventAndComRpcFlags_AndIncludeContextDefaults` | `Resolver` | `HasEvent`, `HasComRpcRequestSupport`, and defaulting `useComRpc/includeContext` based on `additionalContext` object | Write config with: (a) event entry, (b) explicit `useComRpc:true`, (c) `additionalContext:{...}` without `useComRpc/includeContext` | `HasEvent` true for event key. `HasComRpcRequestSupport` true for explicit and additionalContext-derived key. |
-
-### Proposed test case table (Tier B: deferred until mocks are available)
-
-| S.No | Proposed test case | Component(s) | Code paths / branches targeted | Setup pattern (requires missing mocks) | Key assertions / observable outcomes |
-|---:|---|---|---|---|---|
-| 6 | `AppGateway_Resolve_ResolverNotInitialized` | `AppGatewayImplementation` | `FetchResolvedData`: `mResolverPtr == nullptr` | Force resolver null (or call Resolve before Configure) | `Core::ERROR_GENERAL`, resolution contains “Resolver not initialized”. |
-| 7 | `AppGateway_Resolve_ResolverNotConfigured` | `AppGatewayImplementation` | `!mResolverPtr->IsConfigured()` | Configure but ensure no configs loaded | `Core::ERROR_GENERAL`, resolution contains “Resolver not configured”. |
-| 8 | `AppGateway_Resolve_MethodNotSupported_NoAlias` | `AppGatewayImplementation` | `ResolveAlias` empty -> NotSupported | Configure with resolver missing that key | `Core::ERROR_GENERAL`, resolution contains NotSupported. |
-| 9 | `AppGateway_Event_PreProcessEvent_MissingParams_BadRequest` | `AppGatewayImplementation` | event + invalid params | needs resolver config injection via Configure(paths) + IShell | `Core::ERROR_BAD_REQUEST`. |
-| 10 | `AppGateway_Event_PreProcessEvent_MissingListen_BadRequest` | `AppGatewayImplementation` | event + `{}` | needs resolver config injection via Configure(paths) + IShell | `Core::ERROR_BAD_REQUEST`. |
-| 11 | `AppGateway_Event_SubscribeListenTrue_ReturnsListeningResponse` | `AppGatewayImplementation` + `IAppNotifications` | `HandleEvent` Subscribe | `ServiceMock` + `AppNotificationsMock` via callsign injection | `Subscribe` called with correct args and response contains listening/event. |
-| 12 | `AppGateway_ComRpc_RequestHandlerMissing_NotAvailable` | `AppGatewayImplementation` + handler | COM-RPC path / NotAvailable | `ServiceMock` callsign injection | resolution contains NotAvailable. |
-| 13 | `AppGateway_ComRpc_AdditionalContext_WrapsParamsWith__additionalContext` | `AppGatewayImplementation` + handler | additionalContext wrapping shape | handler mock inspects params | wrapped JSON contains `_additionalContext.origin`. |
-| 14 | `AppGateway_PermissionGroup_Denied_NotPermitted` | `AppGatewayImplementation` + authenticator | permission check denies | authenticator mock | resolution contains NotPermitted. |
-| 15 | `AppGateway_PermissionGroup_AuthenticatorMissing_AllowsToProceed` | `AppGatewayImplementation` | permissive behavior when authenticator missing | callsign injection + downstream mock | downstream invoked even without authenticator. |
-
-## Implementation details that tests must reflect
-
-### 1. Resolution keys are always lowercased in `Resolver`
-
-Because `LoadConfig` lowercases keys, tests must query using normalized keys and should include a case-insensitivity test.
-
-### 2. Event method naming as implemented
-
-Even if the config stores an `event` field, the implementation uses the method key when returning `event` in responses and when passing `event` to the notification subscription.
-
-### 3. COM-RPC alias shape
-
-In COM-RPC routing, the alias used for callsign lookup is a callsign (for example `org.rdk.AppGatewayCommon`), not a `callsign.method` string. This differs from the Thunder JSON-RPC invocation path in `CallThunderPlugin`, which expects `callsign.method`.
-
-### 4. `_additionalContext` wrapping structure
-
-When additional context is enabled for COM-RPC routing, the final params string becomes an object containing `params` and `_additionalContext`. Tests should assert this exact shape.
-
-## Coverage gaps and risks (derived from reference suite and AppGateway’s architecture)
-
-The reference suite demonstrates both JSON-RPC and COM-RPC style testing, but AppGateway combines multiple subsystems (resolver, permission checks, notification subscription, and WebSocket dispatch). Achieving high coverage will require reusable mocks similar to the reference’s `ServiceMock`-based callsign injection and the associated `QueryInterfaceByCallsign`-driven callsign routing, because many AppGateway branches only become reachable when the test injects the correct interface mock for a specific callsign.
-
-Some tests will also need a flexible assertion strategy for error and resolution payloads. Depending on how the error formatting helpers serialize JSON, the precise ordering/formatting of fields can vary, so it can be more robust to validate behavior using substring-based checks on the `resolution` JSON (for example asserting that the payload contains an expected error code/message fragment) rather than requiring exact full-string comparisons.
+- Resolver not initialized / not configured errors surfaced via `FetchResolvedData`
+- Event param validation (`listen` missing / wrong type)
+- Subscribe/unsubscribe behavior via AppNotifications
+- Permission group allow/deny behavior
+- COM-RPC request handler not available vs success path
 
 ## Sources
 
-This mapping is derived from:
-
-- Current repository L1 test build and tests:
-  - `Tests/L1Tests/CMakeLists.txt`
+- Current repo tests:
+  - `Tests/L1Tests/tests/test_AppGateway.cpp`
   - `Tests/L1Tests/tests/test_UtilsFile.cpp`
-- Reference L1 tests:
-  - `code_ref/Tests/L1Tests/tests/test_AppManager.cpp`
-  - `code_ref/Tests/L1Tests/tests/test_UserSettings.cpp`
-  - `code_ref/Tests/L1Tests/tests/test_LifecycleManager.cpp`
-  - `code_ref/Tests/L1Tests/tests/test_MessageControl.cpp`
-  - `code_ref/Tests/L1Tests/tests/test_RDKShell.cpp`
-  - `code_ref/Tests/L1Tests/tests/test_UtilsFile.cpp`
-  - `code_ref/Tests/L1Tests/CMakeLists.txt`
+  - `Tests/L1Tests/CMakeLists.txt`
+- Reference patterns:
+  - `code_ref/Tests/L1Tests/tests/*`
 - AppGateway implementation:
-  - `AppGateway/AppGateway.cpp`
-  - `AppGateway/AppGateway.h`
-  - `AppGateway/AppGatewayImplementation.cpp`
-  - `AppGateway/Resolver.cpp`
-  - `AppGateway/AppGatewayResponderImplementation.cpp`
-  - `AppGateway/resolutions/resolution.base.json`
-- Supporting repo docs:
-  - `Tests/README.md`
-  - `docs/l1-workflow-vs-runner.md`
+  - `AppGateway/Resolver.*`
+  - `AppGateway/AppGatewayImplementation.*`
+  - `AppGateway/AppGatewayResponderImplementation.*`
