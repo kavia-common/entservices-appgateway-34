@@ -663,6 +663,40 @@ apply_patches_thundertools() {
 }
 
 # PUBLIC_INTERFACE
+repair_thundertools_cmake_templates_if_needed() {
+  # ThunderTools CMakeLists.txt (as used by L1-tests.yml with ref R4.4.3) expects:
+  #   ThunderTools/cmake/FindProxyStubGenerator.cmake.in
+  #
+  # In some clones/trees, the template file is accidentally named with a trailing dot:
+  #   ThunderTools/cmake/FindProxyStubGenerator.cmake.in.
+  #
+  # That causes CMake configure to fail with:
+  #   File .../ThunderTools/cmake/FindProxyStubGenerator.cmake.in does not exist.
+  #
+  # To keep the local runner robust and aligned with L1-tests.yml expectations, we
+  # create the correctly-named file when the trailing-dot variant exists.
+  local workspace="${1:?workspace required}"
+  local tt_cmake_dir="$workspace/ThunderTools/cmake"
+
+  local expected="$tt_cmake_dir/FindProxyStubGenerator.cmake.in"
+  local trailing_dot="$tt_cmake_dir/FindProxyStubGenerator.cmake.in."
+
+  if [[ -f "$expected" ]]; then
+    return 0
+  fi
+
+  if [[ -f "$trailing_dot" ]]; then
+    warn "ThunderTools template has trailing-dot filename; repairing: $(basename "$trailing_dot") -> $(basename "$expected")"
+    cp -f "$trailing_dot" "$expected"
+    return 0
+  fi
+
+  # If neither exists, keep the error for CMake (real missing content).
+  warn "ThunderTools ProxyStubGenerator CMake template not found (checked: $expected, $trailing_dot)."
+  return 0
+}
+
+# PUBLIC_INTERFACE
 apply_patches_thunder() {
   # Apply Thunder patches, non-interactively, in a git-format aware manner.
   local workspace="${1:?workspace required}"
@@ -1437,6 +1471,9 @@ main() {
   # Patch steps must never block the rest of the run (and must never prompt).
   apply_patches_thundertools "$GITHUB_WORKSPACE"
   apply_patches_thunder "$GITHUB_WORKSPACE"
+
+  # Ensure ThunderTools' CMake template filenames match what ThunderTools' CMake expects.
+  repair_thundertools_cmake_templates_if_needed "$GITHUB_WORKSPACE"
 
   setup_files_if_enabled
 
