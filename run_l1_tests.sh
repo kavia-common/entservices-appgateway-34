@@ -126,21 +126,20 @@ require_cmd() {
 
 # PUBLIC_INTERFACE
 ensure_python_jsonref() {
-  """Ensure Python package 'jsonref' is available for JsonGenerator (non-interactive).
-
-  Thunder/ThunderTools JsonGenerator depends on the Python module `jsonref`.
-  Some environments (local runners/CI images) do not have it preinstalled, which causes
-  CMake configure to fail in FindJsonGenerator.cmake with:
-    "Install jsonref first" / "JsonGenerator generator failed."
-
-  Strategy (non-interactive, no entservices-testframework dependency):
-    1) Prefer `python3 -m pip install --user` (does not require sudo).
-    2) If pip is missing, attempt to bootstrap via `python3 -m ensurepip` (non-interactive).
-    3) If install is not possible, fail fast with a clear error message.
-
-  Env controls:
-    ENSURE_JSONREF=1 (default) to enable this step; set to 0 to skip.
-  """
+  # Ensure Python package 'jsonref' is available for JsonGenerator (non-interactive).
+  #
+  # Thunder/ThunderTools JsonGenerator depends on the Python module `jsonref`.
+  # Some environments (local runners/CI images) do not have it preinstalled, which causes
+  # CMake configure to fail in FindJsonGenerator.cmake with:
+  #   "Install jsonref first" / "JsonGenerator generator failed."
+  #
+  # Strategy (non-interactive, no entservices-testframework dependency):
+  #   1) Verify importability via: python3 -c "import jsonref"
+  #   2) Only if missing: ensure pip exists (python3 -m pip, bootstrap via ensurepip best-effort)
+  #   3) Install via: python3 -m pip install --user jsonref
+  #
+  # Env controls:
+  #   ENSURE_JSONREF=1 (default) to enable this step; set to 0 to skip.
   if [[ "${ENSURE_JSONREF:-1}" != "1" ]]; then
     log "Skipping jsonref ensure step (ENSURE_JSONREF=0)."
     return 0
@@ -151,7 +150,7 @@ ensure_python_jsonref() {
     return 1
   fi
 
-  # If already importable, we're done.
+  # Only install when actually missing.
   if python3 -c "import jsonref" >/dev/null 2>&1; then
     log "Python dependency satisfied: jsonref is already importable."
     return 0
@@ -159,10 +158,9 @@ ensure_python_jsonref() {
 
   log "Python dependency missing: jsonref. Attempting non-interactive install (user-site)."
 
-  # Ensure pip exists (try ensurepip first, then proceed).
+  # Ensure pip exists (try ensurepip first, then proceed). Keep non-interactive.
   if ! python3 -m pip --version >/dev/null 2>&1; then
-    warn "pip not available for python3; attempting to bootstrap with: python3 -m ensurepip --upgrade"
-    # ensurepip may not be present in minimal distros; keep best-effort but non-interactive.
+    warn "pip not available for python3; attempting bootstrap: python3 -m ensurepip --upgrade"
     python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
   fi
 
@@ -171,9 +169,7 @@ ensure_python_jsonref() {
     return 1
   fi
 
-  # Install jsonref to the current user's site-packages (no sudo).
-  # Use --disable-pip-version-check to keep output clean and avoid network chatter.
-  # Use --no-input to ensure strictly non-interactive behavior.
+  # Install to the current user's site-packages (no sudo). Non-interactive.
   python3 -m pip install --user --no-input --disable-pip-version-check -q jsonref
 
   # Re-check import (fail fast if still missing).
