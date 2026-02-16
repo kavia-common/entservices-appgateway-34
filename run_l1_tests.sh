@@ -402,6 +402,91 @@ ensure_l1_workflow_repos_present() {
 }
 
 ###############################################################################
+# NEW: Repair/detect invalid "empty dirs" when fetch is disabled
+###############################################################################
+
+# PUBLIC_INTERFACE
+ensure_git_repo_or_die() {
+  # Ensure a directory is a valid git repo; if it's not, attempt to repair it.
+  #
+  # Repair strategy:
+  #   - If ENABLE_FETCH_DEPS=1: delete and re-clone.
+  #   - If ENABLE_FETCH_DEPS=0: fail with a clear error (because we cannot fetch),
+  #     rather than proceeding to cmake errors like "missing CMakeLists.txt".
+  local workspace="${1:?workspace required}"
+  local name="${2:?name required}"          # e.g. Thunder
+  local repo_dir="${3:?repo_dir required}"  # full path
+  local remote_url="${4:?remote_url required}"
+  local ref="${5:?ref required}"
+
+  if [[ -d "$repo_dir" && -d "$repo_dir/.git" ]]; then
+    return 0
+  fi
+
+  # Common failure mode from the log context: directory exists but is NOT a git repo (often empty).
+  if [[ -d "$repo_dir" && ! -d "$repo_dir/.git" ]]; then
+    warn "$name exists but is not a git repo: $repo_dir"
+  fi
+  if [[ ! -d "$repo_dir" ]]; then
+    warn "$name repo directory missing: $repo_dir"
+  fi
+
+  if [[ "${ENABLE_FETCH_DEPS:-0}" == "1" ]]; then
+    warn "Attempting to repair $name by re-cloning (ENABLE_FETCH_DEPS=1)."
+    ensure_repo_cloned "$repo_dir" "$remote_url" "$ref"
+    return 0
+  fi
+
+  err "Cannot proceed: $name is not a valid git clone at $repo_dir and ENABLE_FETCH_DEPS=0."
+  err "Set ENABLE_FETCH_DEPS=1 (or pass --full-deps) to allow re-clone/repair."
+  return 1
+}
+
+###############################################################################
+# NEW: Thunder source dir detection (Thunder root may not contain CMakeLists.txt)
+###############################################################################
+
+# PUBLIC_INTERFACE
+detect_thunder_cmake_source_dir() {
+  # Determine the correct Thunder CMake source directory (the one containing CMakeLists.txt).
+  #
+  # Observed failure (authoritative log context):
+  #   CMake Error: The source directory ".../Thunder" does not appear to contain CMakeLists.txt.
+  #
+  # Thunder often builds from Thunder/Source.
+  #
+  # Prints the detected path to stdout.
+  local workspace="${1:?workspace required}"
+  local repo_root="$workspace/Thunder"
+
+  local candidates=(
+    "$repo_root"
+    "$repo_root/Source"
+    "$repo_root/source"
+    "$repo_root/WPEFramework"
+  )
+
+  local c
+  for c in "${candidates[@]}"; do
+    if [[ -f "$c/CMakeLists.txt" ]]; then
+      echo "$c"
+      return 0
+    fi
+  done
+
+  # Fallback: find first CMakeLists.txt under Thunder (bounded depth).
+  # We keep this simple and robust across versions.
+  local found
+  found="$(find "$repo_root" -maxdepth 3 -name CMakeLists.txt -print -quit 2>/dev/null || true)"
+  if [[ -n "$found" ]]; then
+    echo "$(dirname "$found")"
+    return 0
+  fi
+
+  return 1
+}
+
+###############################################################################
 # Patch steps (mirror .github/workflows/L1-tests.yml)
 ###############################################################################
 
@@ -588,12 +673,11 @@ generate_external_headers() {
 
 # PUBLIC_INTERFACE
 build_thunder() {
-  # Configure, build and install Thunder in a dedicated step, printing the build output path.
+  # Configure, build and install Thunder in a dedicated step.
   #
-  # NOTE:
-  #   Thunder *must* be installed to a user-writable prefix in local/sandboxed
-  #   environments. Otherwise `cmake --install` may fail when trying to set
-  #   permissions on installed CMake package dirs (e.g., WPEFramework/common).
+  # Fixes two local failure modes:
+  #   1) Thunder dir exists but isn't a real git repo (often empty) -> handled earlier.
+  #   2) Thunder repo root may not contain CMakeLists.txt -> auto-detect a correct subdir (e.g. Thunder/Source).
   local workspace="${1:?workspace required}"
   local build_type="${BUILD_TYPE:-Debug}"
   local toolchain="${TOOLCHAIN_FILE:-}"
@@ -629,7 +713,15 @@ build_thunder() {
   export CMAKE_PREFIX_PATH="${thunder_cmake_prefix_path}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
   export WPEFramework_DIR="$thunder_wpeframework_dir"
 
+  local thunder_src_dir
+  if ! thunder_src_dir="$(detect_thunder_cmake_source_dir "$workspace")"; then
+    err "Could not locate Thunder CMake source directory (no CMakeLists.txt found under $workspace/Thunder)."
+    err "If Thunder is not cloned correctly, set ENABLE_FETCH_DEPS=1 (or pass --full-deps) to re-clone."
+    return 1
+  fi
+
   local thunder_build_dir="$workspace/build/Thunder"
+  log "Thunder source dir (CMakeLists.txt): $thunder_src_dir"
   log "Thunder build directory: $thunder_build_dir"
   log "Thunder install mode: ${THUNDER_INSTALL_MODE:-user}"
   log "Thunder install prefix: $thunder_install_prefix"
@@ -638,7 +730,7 @@ build_thunder() {
   log "ThunderTools CMake module path (for generators): $thundertools_module_path"
 
   cmake -G "${CMAKE_GENERATOR:-Ninja}" \
-    -S "$workspace/Thunder" \
+    -S "$thunder_src_dir" \
     -B "$thunder_build_dir" \
     -DCMAKE_INSTALL_PREFIX="$thunder_install_prefix" \
     -DCMAKE_MODULE_PATH="$thundertools_module_path" \
@@ -728,9 +820,15 @@ build_all() {
   local cmake_module_path_for_rest="$thundertools_module_path"
 
   # Thunder (install into user-writable prefix by default)
+  local thunder_src_dir
+  if ! thunder_src_dir="$(detect_thunder_cmake_source_dir "$workspace")"; then
+    err "Could not locate Thunder CMake source directory (no CMakeLists.txt found under $workspace/Thunder)."
+    return 1
+  fi
+
   log "Step: Build Thunder"
   cmake_configure_build_install \
-    "$workspace/Thunder" \
+    "$thunder_src_dir" \
     "$workspace/build/Thunder" \
     "$thunder_install_prefix" \
     "$cmake_module_path_for_rest" \
@@ -868,7 +966,7 @@ build_all() {
       -DCMAKE_BUILD_TYPE="$build_type" \
       -DCMAKE_CXX_STANDARD_INCLUDE_DIRECTORIES="$common_include_dirs_cmake" \
       -DCMAKE_INCLUDE_PATH="$common_include_dirs_cmake" \
-      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink -Wl,-wrap,v_secure_system -Wl,-wrap,pclose -Wl,-wrap,setmntent -Wl,-wrap,getmntent"
+      -DCMAKE_CXX_FLAGS="${common_defines[*]} ${common_includes_flags} -include $workspace/entservices-testframework/Tests/mocks/pkg.h ${coverage_flags[*]} -Wall -Wno-unused-result -Wno-deprecated-declarations -Wno-error=format= -Wl,-wrap,system -Wl,-wrap,popen -Wl,-wrap,syslog -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_popen -Wl,-wrap,v_secure_pclose -Wl,-wrap,unlink -Wl,-wrap,v_secure_system -Wl,-wrap,v_secure_pclose -Wl,-wrap,pclose -Wl,-wrap,setmntent -Wl,-wrap,getmntent"
     local mocks_cfg_rc=$?
 
     local mocks_build_rc=0
@@ -984,9 +1082,6 @@ run_tests() {
     warn "RdkServicesL1Test binary not found in $install_usr/bin (will still attempt to run via PATH)."
   fi
 
-  local env_path="PATH=$install_usr/bin:${PATH}"
-  local env_ld="LD_LIBRARY_PATH=$install_usr/lib:$install_usr/lib/wpeframework/plugins:$thunder_usr/lib:$thunder_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
-
   log "Step: Run unit tests without valgrind"
 
   if command -v RdkServicesL1Test >/dev/null 2>&1; then
@@ -1034,8 +1129,6 @@ run_tests() {
     log "  $workspace/rdkL1TestResultsWithValgrind.json"
     log "  $(pwd)/valgrind_log"
   fi
-
-  : "$env_path" "$env_ld"
 }
 
 # PUBLIC_INTERFACE
@@ -1163,6 +1256,10 @@ main() {
     done
   fi
 
+  # Critical: Thunder/ThunderTools must be real git clones (log context shows they were empty/non-git).
+  ensure_git_repo_or_die "$GITHUB_WORKSPACE" "ThunderTools" "$GITHUB_WORKSPACE/ThunderTools" "https://github.com/rdkcentral/ThunderTools.git" "R4.4.3"
+  ensure_git_repo_or_die "$GITHUB_WORKSPACE" "Thunder" "$GITHUB_WORKSPACE/Thunder" "https://github.com/rdkcentral/Thunder.git" "${THUNDER_REF:-R4.4.1}"
+
   if command -v meson >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1; then
     if sudo -n true >/dev/null 2>&1; then
       build_and_install_trower_base64 "$GITHUB_WORKSPACE"
@@ -1173,7 +1270,7 @@ main() {
     warn "meson/ninja not found; skipping trower-base64 build/install."
   fi
 
-  # Patch steps must never block the rest of the run.
+  # Patch steps must never block the rest of the run (and must never prompt).
   apply_patches_thundertools "$GITHUB_WORKSPACE"
   apply_patches_thunder "$GITHUB_WORKSPACE"
 
