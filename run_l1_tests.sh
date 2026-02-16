@@ -228,6 +228,88 @@ cmake_configure_build_install() {
   cmake --install "$build_dir"
 }
 
+# PUBLIC_INTERFACE
+safe_stage_thunder_install_artifacts() {
+  # Stage a minimal, permission-safe "install" for Thunder (WPEFramework) without invoking
+  # `cmake --install`, which can fail in restricted/overlay filesystems with errors like:
+  #   file INSTALL cannot set permissions on ".../lib/cmake/WPEFramework/common"
+  #
+  # We copy only the typical artifacts required by downstream CMake config-mode and builds:
+  #   - include/
+  #   - lib/ (including wpeframework/* and proxystubs)
+  #   - lib/cmake/ (WPEFrameworkConfig.cmake, etc.)
+  #
+  # This avoids any chmod/chown operations performed by CMake's install scripts.
+  #
+  # Args:
+  #   $1: thunder_build_dir
+  #   $2: thunder_install_prefix (destination)
+  local thunder_build_dir="${1:?thunder_build_dir required}"
+  local thunder_install_prefix="${2:?thunder_install_prefix required}"
+
+  log "Thunder install: using permission-safe staged copy (skipping cmake --install)"
+  log "  from build dir: $thunder_build_dir"
+  log "  to prefix:      $thunder_install_prefix"
+
+  mkdir -p "$thunder_install_prefix"
+
+  # Use rsync if available (best for copying trees), otherwise fall back to cp -a.
+  local copy_tree() {
+    local src="${1:?src required}"
+    local dst="${2:?dst required}"
+    if [[ ! -d "$src" ]]; then
+      return 0
+    fi
+    mkdir -p "$dst"
+    if command -v rsync >/dev/null 2>&1; then
+      rsync -a --delete "$src/" "$dst/"
+    else
+      rm -rf "$dst"/*
+      cp -a "$src/." "$dst/"
+    fi
+  }
+
+  # Preferred source: the install tree inside the build directory (common with CMake).
+  local staged_root="$thunder_build_dir/_install"
+  local staged_usr="$staged_root"
+
+  # Some projects stage under <build>/_install or <build>/install; try both.
+  if [[ ! -d "$staged_usr" ]]; then
+    staged_root="$thunder_build_dir/install"
+    staged_usr="$staged_root"
+  fi
+
+  # If no staged install tree exists, fall back to copying from known output locations.
+  if [[ -d "$staged_usr" ]]; then
+    copy_tree "$staged_usr/include" "$thunder_install_prefix/include"
+    copy_tree "$staged_usr/lib" "$thunder_install_prefix/lib"
+    copy_tree "$staged_usr/etc" "$thunder_install_prefix/etc"
+    return 0
+  fi
+
+  # Fallback heuristic: copy from common build output directories.
+  warn "Thunder build did not produce a staged install tree; using heuristic copy of build outputs."
+
+  # Headers: often not generated, but if there are any exported headers under Source/, copy none here.
+  # Downstream builds typically rely on installed headers; if missing, they likely already exist from
+  # a prior successful install. We still try common locations below.
+  if [[ -d "$thunder_build_dir/include" ]]; then
+    copy_tree "$thunder_build_dir/include" "$thunder_install_prefix/include"
+  fi
+
+  # Libraries: copy from build tree if present.
+  mkdir -p "$thunder_install_prefix/lib"
+  find "$thunder_build_dir" -maxdepth 4 -type f \( -name "libWPEFramework*.so*" -o -name "libWPEFramework*.a" \) -exec cp -a {} "$thunder_install_prefix/lib/" \; 2>/dev/null || true
+
+  # CMake package config: common install location in build tree might be present already
+  # (but in our failure case, install prefix partially exists). If present, keep it.
+  if [[ -d "$thunder_install_prefix/lib/cmake/WPEFramework" ]]; then
+    log "Thunder cmake package dir already present: $thunder_install_prefix/lib/cmake/WPEFramework"
+  else
+    warn "Thunder cmake package dir not found under prefix; downstream config-mode may fail if WPEFrameworkConfig.cmake is missing."
+  fi
+}
+
 ###############################################################################
 # Patch helpers (non-interactive, git-format aware)
 ###############################################################################
@@ -800,7 +882,13 @@ build_thunder() {
     ${toolchain:+-DCMAKE_TOOLCHAIN_FILE="$toolchain"}
 
   cmake --build "$thunder_build_dir" -j"$(nproc)"
-  cmake --install "$thunder_build_dir"
+
+  # IMPORTANT:
+  # Avoid `cmake --install` for Thunder because it can fail in restricted environments
+  # (overlay/sandbox filesystems) with "file INSTALL cannot set permissions".
+  #
+  # Instead, do a permission-safe staged copy of only the required artifacts.
+  safe_stage_thunder_install_artifacts "$thunder_build_dir" "$thunder_install_prefix"
 }
 
 # PUBLIC_INTERFACE
@@ -884,16 +972,21 @@ build_all() {
   fi
 
   log "Step: Build Thunder"
-  cmake_configure_build_install \
-    "$thunder_src_dir" \
-    "$workspace/build/Thunder" \
-    "$thunder_install_prefix" \
-    "$cmake_module_path_for_rest" \
+  # Do NOT call cmake --install for Thunder here (see build_thunder()) as it can fail due to
+  # chmod/chown permission restrictions in some CI/overlay filesystems.
+  cmake -G "${CMAKE_GENERATOR:-Ninja}" \
+    -S "$thunder_src_dir" \
+    -B "$workspace/build/Thunder" \
+    -DCMAKE_INSTALL_PREFIX="$thunder_install_prefix" \
+    -DCMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
+    -DGENERIC_CMAKE_MODULE_PATH="$cmake_module_path_for_rest" \
     -DMESSAGING=ON \
     -DBUILD_TYPE="$build_type" \
     -DBINDING=127.0.0.1 \
     -DPORT=55555 \
     -DEXCEPTIONS_ENABLE=ON
+  cmake --build "$workspace/build/Thunder" -j"$(nproc)"
+  safe_stage_thunder_install_artifacts "$workspace/build/Thunder" "$thunder_install_prefix"
 
   # entservices-apis
   log "Step: Build entservices-apis"
