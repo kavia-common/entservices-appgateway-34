@@ -309,17 +309,58 @@ ensure_l1_workflow_repos_present() {
 
 # PUBLIC_INTERFACE
 apply_patches_thundertools() {
-  # Apply ThunderTools patch exactly as CI does.
+  # Apply ThunderTools patch in a non-interactive, NetworkManager-style way:
+  #   - run from the ThunderTools repo root (target directory)
+  #   - select the correct strip level (-pN) so patch doesn't prompt
+  #   - if already applied, skip and continue
+  #
+  # CI generally does: pushd ThunderTools && patch -p1 < <patchfile>
+  # but local trees may differ (or patch may have different file prefixes),
+  # so we autodetect the correct -p level.
   local workspace="${1:?workspace required}"
 
-  if [[ -d "$workspace/ThunderTools" && -d "$workspace/entservices-testframework" ]]; then
-    log "Step: Apply patches ThunderTools (match L1-tests.yml)"
-    pushd "$workspace/ThunderTools" >/dev/null
-    patch -p1 <"$workspace/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch"
-    popd >/dev/null
-  else
-    warn "ThunderTools or entservices-testframework missing; skipping ThunderTools patch step."
+  local repo_dir="$workspace/ThunderTools"
+  local patch_file="$workspace/entservices-testframework/patches/00010-R4.4-Add-support-for-project-dir.patch"
+
+  if [[ ! -d "$repo_dir" ]]; then
+    warn "ThunderTools missing; skipping ThunderTools patch step."
+    return 0
   fi
+  if [[ ! -f "$patch_file" ]]; then
+    warn "ThunderTools patch file missing ($patch_file); skipping ThunderTools patch step."
+    return 0
+  fi
+
+  log "Step: Apply patches ThunderTools (match L1-tests.yml; non-interactive)"
+
+  pushd "$repo_dir" >/dev/null
+
+  # Try likely strip levels. Use --dry-run to avoid modifying tree while probing.
+  # `--batch` prevents interactive questions; `-t` assumes reversed/already applied patches.
+  local p_level=""
+  local p
+  for p in 0 1 2 3 4; do
+    if patch --dry-run --batch -t -p"$p" <"$patch_file" >/dev/null 2>&1; then
+      p_level="$p"
+      break
+    fi
+  done
+
+  if [[ -z "$p_level" ]]; then
+    warn "Could not find a working patch strip level (-pN) for $patch_file in $repo_dir; skipping ThunderTools patch step."
+    popd >/dev/null
+    return 0
+  fi
+
+  log "Applying ThunderTools patch with -p${p_level}"
+  # Apply for real. `--forward` skips patches that appear already applied/reversed.
+  # `--batch` keeps it non-interactive.
+  if ! patch --batch --forward -p"$p_level" <"$patch_file"; then
+    # If it fails, do not block the rest of the L1 flow (NetworkManager approach is to proceed).
+    warn "ThunderTools patch application failed; continuing with build/test flow."
+  fi
+
+  popd >/dev/null
 }
 
 # PUBLIC_INTERFACE
