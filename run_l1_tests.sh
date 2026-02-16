@@ -172,6 +172,104 @@ cmake_configure_build_install() {
 }
 
 ###############################################################################
+# Patch helpers (non-interactive, git-format aware)
+###############################################################################
+
+# PUBLIC_INTERFACE
+is_git_format_patch() {
+  """Return 0 if the patch appears to be a git-format patch (has diff --git and/or commit headers)."""
+  local patch_file="${1:?patch_file required}"
+  # "diff --git" is the strongest signal; "commit " header appears in patches exported from git show.
+  if grep -qE '^(diff --git |commit [0-9a-f]{7,40}$)' "$patch_file" 2>/dev/null; then
+    return 0
+  fi
+  return 1
+}
+
+# PUBLIC_INTERFACE
+apply_patch_non_interactive() {
+  # Apply a patch file to a git repo directory in a non-interactive way.
+  #
+  # Behavior:
+  #   1) If patch is git-format (diff --git / commit headers): use `git apply` (with --3way).
+  #      - Skip cleanly if already applied (or reverse-applied).
+  #   2) Otherwise: use `patch` but auto-detect working strip level (-pN) via --dry-run.
+  #      - Apply with --batch/--forward to avoid prompts; treat "already applied" as success.
+  #
+  # Args:
+  #   $1: repo_dir (git working tree)
+  #   $2: patch_file (path to patch)
+  local repo_dir="${1:?repo_dir required}"
+  local patch_file="${2:?patch_file required}"
+
+  if [[ ! -d "$repo_dir/.git" ]]; then
+    warn "Not a git repo: $repo_dir (skipping patch $patch_file)"
+    return 0
+  fi
+  if [[ ! -f "$patch_file" ]]; then
+    warn "Patch file missing: $patch_file (skipping)"
+    return 0
+  fi
+
+  pushd "$repo_dir" >/dev/null
+
+  # Git-format patches: prefer git apply to avoid strip-level prompts.
+  if is_git_format_patch "$patch_file"; then
+    # First check: does it apply cleanly?
+    if git apply --check "$patch_file" >/dev/null 2>&1; then
+      log "Applying (git apply) $(basename "$patch_file") in $repo_dir"
+      # --3way helps when context differs slightly; still non-interactive.
+      if ! git apply --3way "$patch_file"; then
+        warn "git apply failed for $patch_file; continuing."
+      fi
+      popd >/dev/null
+      return 0
+    fi
+
+    # Second check: maybe already applied? (reverse would apply cleanly)
+    if git apply --reverse --check "$patch_file" >/dev/null 2>&1; then
+      log "Patch already applied; skipping: $(basename "$patch_file")"
+      popd >/dev/null
+      return 0
+    fi
+
+    # If neither forward nor reverse check works, do best-effort 3way apply.
+    warn "Patch does not apply cleanly (and not detected as already-applied). Best-effort git apply --3way: $(basename "$patch_file")"
+    if ! git apply --3way "$patch_file"; then
+      warn "Best-effort git apply still failed; continuing."
+    fi
+    popd >/dev/null
+    return 0
+  fi
+
+  # Non-git patches: use `patch` with auto -pN detection.
+  local p_level=""
+  local p
+  for p in 0 1 2 3 4 5 6; do
+    # --batch avoids prompts; -t treats reversed/already applied as success in dry-run probing.
+    if patch --dry-run --batch -t -p"$p" <"$patch_file" >/dev/null 2>&1; then
+      p_level="$p"
+      break
+    fi
+  done
+
+  if [[ -z "$p_level" ]]; then
+    warn "Could not find a working patch strip level (-pN) for $patch_file in $repo_dir; skipping."
+    popd >/dev/null
+    return 0
+  fi
+
+  log "Applying (patch) $(basename "$patch_file") with -p${p_level} in $repo_dir"
+  # --forward: if already applied/reversed, skip without prompting.
+  # --batch: never prompt.
+  if ! patch --batch --forward -p"$p_level" <"$patch_file"; then
+    warn "patch tool failed for $patch_file; continuing."
+  fi
+
+  popd >/dev/null
+}
+
+###############################################################################
 # ThunderTools / Thunder install-prefix selection (permission-safe defaults)
 ###############################################################################
 
@@ -309,14 +407,9 @@ ensure_l1_workflow_repos_present() {
 
 # PUBLIC_INTERFACE
 apply_patches_thundertools() {
-  # Apply ThunderTools patch in a non-interactive, NetworkManager-style way:
-  #   - run from the ThunderTools repo root (target directory)
-  #   - select the correct strip level (-pN) so patch doesn't prompt
-  #   - if already applied, skip and continue
-  #
-  # CI generally does: pushd ThunderTools && patch -p1 < <patchfile>
-  # but local trees may differ (or patch may have different file prefixes),
-  # so we autodetect the correct -p level.
+  # Apply ThunderTools patch non-interactively:
+  # - If git-format patch: use git apply (with --3way), skip if already applied.
+  # - Else: auto-detect patch -pN.
   local workspace="${1:?workspace required}"
 
   local repo_dir="$workspace/ThunderTools"
@@ -332,54 +425,30 @@ apply_patches_thundertools() {
   fi
 
   log "Step: Apply patches ThunderTools (match L1-tests.yml; non-interactive)"
-
-  pushd "$repo_dir" >/dev/null
-
-  # Try likely strip levels. Use --dry-run to avoid modifying tree while probing.
-  # `--batch` prevents interactive questions; `-t` assumes reversed/already applied patches.
-  local p_level=""
-  local p
-  for p in 0 1 2 3 4; do
-    if patch --dry-run --batch -t -p"$p" <"$patch_file" >/dev/null 2>&1; then
-      p_level="$p"
-      break
-    fi
-  done
-
-  if [[ -z "$p_level" ]]; then
-    warn "Could not find a working patch strip level (-pN) for $patch_file in $repo_dir; skipping ThunderTools patch step."
-    popd >/dev/null
-    return 0
-  fi
-
-  log "Applying ThunderTools patch with -p${p_level}"
-  # Apply for real. `--forward` skips patches that appear already applied/reversed.
-  # `--batch` keeps it non-interactive.
-  if ! patch --batch --forward -p"$p_level" <"$patch_file"; then
-    # If it fails, do not block the rest of the L1 flow (NetworkManager approach is to proceed).
-    warn "ThunderTools patch application failed; continuing with build/test flow."
-  fi
-
-  popd >/dev/null
+  apply_patch_non_interactive "$repo_dir" "$patch_file"
 }
 
 # PUBLIC_INTERFACE
 apply_patches_thunder() {
-  # Apply Thunder patches exactly as CI does.
+  # Apply Thunder patches, non-interactively, in a git-format aware manner.
   local workspace="${1:?workspace required}"
 
-  if [[ -d "$workspace/Thunder" && -d "$workspace/entservices-testframework" ]]; then
-    log "Step: Apply patches Thunder (match L1-tests.yml)"
-    pushd "$workspace/Thunder" >/dev/null
-    patch -p1 <"$workspace/entservices-testframework/patches/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch"
-    patch -p1 <"$workspace/entservices-testframework/patches/error_code_R4_4.patch"
-    patch -p1 <"$workspace/entservices-testframework/patches/1004-Add-support-for-project-dir.patch"
-    patch -p1 <"$workspace/entservices-testframework/patches/RDKEMW-733-Add-ENTOS-IDS.patch"
-    patch -p1 <"$workspace/entservices-testframework/patches/Jsonrpc_dynamic_error_handling.patch"
-    popd >/dev/null
-  else
+  local repo_dir="$workspace/Thunder"
+  local patches_dir="$workspace/entservices-testframework/patches"
+
+  if [[ ! -d "$repo_dir" || ! -d "$workspace/entservices-testframework" ]]; then
     warn "Thunder or entservices-testframework missing; skipping Thunder patch step."
+    return 0
   fi
+
+  log "Step: Apply patches Thunder (match L1-tests.yml; non-interactive)"
+
+  # Keep the patch list as in CI.
+  apply_patch_non_interactive "$repo_dir" "$patches_dir/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch"
+  apply_patch_non_interactive "$repo_dir" "$patches_dir/error_code_R4_4.patch"
+  apply_patch_non_interactive "$repo_dir" "$patches_dir/1004-Add-support-for-project-dir.patch"
+  apply_patch_non_interactive "$repo_dir" "$patches_dir/RDKEMW-733-Add-ENTOS-IDS.patch"
+  apply_patch_non_interactive "$repo_dir" "$patches_dir/Jsonrpc_dynamic_error_handling.patch"
 }
 
 ###############################################################################
@@ -672,27 +741,8 @@ build_all() {
     -DEXCEPTIONS_ENABLE=ON
 
   # entservices-apis
-  #
-  # IMPORTANT:
-  #   entservices-apis generates code that includes Thunder interface headers like:
-  #     #include <interfaces/IAppManager.h>
-  #     #include <interfaces/entservices_errorcodes.h>
-  #
-  #   Those headers live under:
-  #     <thunder-prefix>/include/WPEFramework/interfaces/...
-  #
-  #   Therefore the compiler needs this include root (directory, not file):
-  #     -I<thunder-prefix>/include/WPEFramework
-  #
-  #   Previous failing builds showed warnings like:
-  #     cc1plus: warning: .../entservices-apis/apis/Module.cpp: not a directory
-  #   which indicates file paths accidentally ended up in include-dir lists.
-  #
-  #   To prevent stale/bad include flags from persisting, we *always* clean the
-  #   entservices-apis build dir before reconfiguring.
   log "Step: Build entservices-apis"
 
-  # Thunder install prefix (may be separate from install/usr)
   local thunder_install_prefix_local=""
   local thunder_wpeframework_dir_local=""
   while IFS='=' read -r k v; do
@@ -702,34 +752,15 @@ build_all() {
     esac
   done < <(compute_thunder_prefixes "$workspace")
 
-  # Belt-and-suspenders: export again in case build_all is invoked standalone.
   export CMAKE_PREFIX_PATH="${thunder_install_prefix_local}${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
   export WPEFramework_DIR="$thunder_wpeframework_dir_local"
 
-  # Correct include roots for resolving <interfaces/...> are:
-  #   - Thunder (WPEFramework) interfaces:
-  #       <thunder-prefix>/include/WPEFramework/interfaces/...
-  #     so we must add:
-  #       -I<thunder-prefix>/include/WPEFramework
-  #
-  #   - entservices-apis generated/installed interfaces (e.g. entservices_errorcodes.h):
-  #       <install-prefix>/include/WPEFramework/interfaces/...
-  #     so we must also add:
-  #       -I<install-prefix>/include/WPEFramework
-  #
-  # Note:
-  #   Passing CMAKE_INCLUDE_PATH did not reliably propagate into the actual target
-  #   include dirs for this project (as observed from generated flags.make). To
-  #   make this deterministic, we explicitly inject the include roots via compiler
-  #   flags for the entservices-apis build.
   local thunder_include_root="$thunder_install_prefix_local/include"
   local thunder_wpeframework_include="$thunder_include_root/WPEFramework"
 
   local install_include_root="$install_prefix/include"
   local install_wpeframework_include="$install_include_root/WPEFramework"
 
-  # Clean & reconfigure to ensure we don't reuse a cached configuration that
-  # injected file paths as include directories.
   rm -rf "$workspace/build/entservices-apis"
 
   cmake_configure_build_install \
@@ -743,15 +774,7 @@ build_all() {
     -DCMAKE_CXX_FLAGS="-I$thunder_wpeframework_include -I$install_wpeframework_include" \
     -DCMAKE_C_FLAGS="-I$thunder_wpeframework_include -I$install_wpeframework_include"
 
-  # googletest
-  #
-  # NOTE:
-  #   In some sandboxed/overlay environments, `cmake --install` fails with:
-  #     file INSTALL cannot set permissions on ".../install/usr/include": Operation not permitted
-  #   even when the directory is writable.
-  #
-  #   The L1 build does not require googletest headers/libs to be installed into the shared
-  #   prefix; it is sufficient to build it and link against build outputs as needed.
+  # googletest (build only)
   log "Step: Build googletest"
   cmake -G "${CMAKE_GENERATOR:-Ninja}" \
     -S "$workspace/googletest" \
@@ -765,9 +788,7 @@ build_all() {
     -DCMAKE_POSITION_INDEPENDENT_CODE=ON
   cmake --build "$workspace/build/googletest" -j"$(nproc)"
 
-  # headers (needed before mocks/appgateway/testframework builds)
-  # Minimal L1 path should not require entservices-testframework. Only generate
-  # placeholder headers if the testframework tree is present.
+  # headers (only if testframework present)
   if [[ -d "$workspace/entservices-testframework/Tests" ]]; then
     generate_external_headers "$workspace"
   else
@@ -775,18 +796,6 @@ build_all() {
   fi
 
   # Common flags (mirror CI)
-  #
-  # IMPORTANT:
-  # Avoid embedding "-I ..." strings into a multi-line CMAKE_CXX_FLAGS value.
-  # In previous failing runs, that ended up producing invalid include flags
-  # like `-I /path/to/entservices-apis/apis/Module.cpp`, causing:
-  #   cc1plus: warning: ... not a directory
-  #
-  # Keep include dirs as raw directories, and only assemble -I flags as a single
-  # line. Also include Thunder's *installed* include roots so generated code
-  # can resolve headers like:
-  #   #include <interfaces/IAppManager.h>
-  #   #include <interfaces/entservices_errorcodes.h>
   local thunder_install_prefix_for_builds=""
   while IFS='=' read -r k v; do
     case "$k" in
@@ -794,10 +803,9 @@ build_all() {
     esac
   done < <(compute_thunder_prefixes "$workspace")
 
-  local thunder_include_root="$thunder_install_prefix_for_builds/include"
-  local thunder_wpeframework_include="$thunder_include_root/WPEFramework"
+  local thunder_include_root_for_builds="$thunder_install_prefix_for_builds/include"
+  local thunder_wpeframework_include_for_builds="$thunder_include_root_for_builds/WPEFramework"
 
-  # Raw include dirs (no "-I" here).
   local common_include_dirs=(
     "$workspace/entservices-testframework/Tests/headers"
     "$workspace/entservices-testframework/Tests"
@@ -806,17 +814,15 @@ build_all() {
     "$workspace/Thunder/Source/core"
     "$workspace/install/usr/include"
     "$workspace/install/usr/include/WPEFramework"
-    "$thunder_include_root"
-    "$thunder_wpeframework_include"
+    "$thunder_include_root_for_builds"
+    "$thunder_wpeframework_include_for_builds"
   )
 
-  # Single-line -I flags (avoid embedded newlines).
   local common_includes_flags=""
   for d in "${common_include_dirs[@]}"; do
     common_includes_flags+=" -I $d"
   done
 
-  # Semicolon-separated list for CMake list variables.
   local common_include_dirs_cmake
   common_include_dirs_cmake="$(IFS=';'; echo "${common_include_dirs[*]}")"
 
@@ -836,10 +842,6 @@ build_all() {
   )
 
   # mocks (optional)
-  #
-  # Minimal L1 coverage for AppGateway should not require the full testframework mocks
-  # (they pull in system dependencies like gstreamer/libdrm/curl on many hosts).
-  # Keep this step behind an explicit toggle.
   if [[ "${ENABLE_BUILD_MOCKS:-0}" == "1" ]]; then
     log "Step: Build mocks (ENABLE_BUILD_MOCKS=1)"
 
@@ -853,7 +855,6 @@ build_all() {
       enable_protobuf_mocks="OFF"
     fi
 
-    # Configure/build mocks as best-effort: failure here should not stop AppGateway/L1 flow.
     set +e
     cmake -S "$workspace/entservices-testframework/Tests/mocks" \
       -B "$workspace/build/mocks" \
@@ -889,23 +890,11 @@ build_all() {
     log "Skipping mocks build (ENABLE_BUILD_MOCKS=0)."
   fi
 
-  # AppGateway (this repo)
-  #
-  # IMPORTANT:
-  #   The repository layout in this workspace is:
-  #     AppGateway/, AppGatewayCommon/, AppNotifications/, Tests/, ...
-  #   There is no nested "entservices-appgateway/" subdirectory. Previous runs failed with:
-  #     CMake Error: The source directory ".../entservices-appgateway" does not exist.
-  #
-  #   Build from the repo root so the top-level CMakeLists.txt can include the correct subdirs.
+  # AppGateway (repo root)
   log "Step: Build AppGateway (repo root)"
   local appgateway_src_dir="$workspace"
   local appgateway_build_dir="$workspace/build/entservices-appgateway"
 
-  # Avoid unnecessary rebuilds: if the build directory is already configured and we've already
-  # installed once, just build (which should be a no-op if everything is up-to-date).
-  #
-  # We use CMake's install stamp as a cheap "this target succeeded before" indicator.
   local appgateway_install_stamp="$appgateway_build_dir/CMakeFiles/install.stamp"
   local appgateway_configured=0
   if [[ -f "$appgateway_build_dir/CMakeCache.txt" ]]; then
@@ -913,8 +902,6 @@ build_all() {
   fi
 
   if [[ "$appgateway_configured" -ne 1 ]]; then
-    # Optional forced-includes from entservices-testframework mocks.
-    # In minimal mode (or when testframework isn't present), do not add these.
     local tf_pkg_header="$workspace/entservices-testframework/Tests/mocks/pkg.h"
     local tf_secure_header="$workspace/entservices-testframework/Tests/mocks/secure_wrappermock.h"
     local tf_forced_includes=""
@@ -994,17 +981,14 @@ run_tests() {
   local thunder_usr="$thunder_install_prefix"
 
   if [[ ! -x "$install_usr/bin/RdkServicesL1Test" && ! -x "$install_usr/bin/RdkServicesL1Testd" ]]; then
-    # CI uses RdkServicesL1Test on PATH. We'll rely on PATH but print a helpful message.
     warn "RdkServicesL1Test binary not found in $install_usr/bin (will still attempt to run via PATH)."
   fi
 
-  # Prefer locally installed artifacts first, but also include Thunder's libs/plugins from its prefix.
   local env_path="PATH=$install_usr/bin:${PATH}"
   local env_ld="LD_LIBRARY_PATH=$install_usr/lib:$install_usr/lib/wpeframework/plugins:$thunder_usr/lib:$thunder_usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
 
   log "Step: Run unit tests without valgrind"
 
-  # Prefer the canonical L1 runner binary if available (CI parity).
   if command -v RdkServicesL1Test >/dev/null 2>&1; then
     (
       export PATH="$install_usr/bin:${PATH}"
@@ -1051,7 +1035,6 @@ run_tests() {
     log "  $(pwd)/valgrind_log"
   fi
 
-  # Silence unused variable warning (document environment setup).
   : "$env_path" "$env_ld"
 }
 
@@ -1068,8 +1051,6 @@ generate_coverage() {
   require_cmd lcov
   require_cmd genhtml
 
-  # Prefer this repo's lcovrc so coverage generation does not depend on
-  # entservices-testframework being present in the workspace.
   local lcovrc="$workspace/Tests/L1Tests/.lcovrc_l1"
   local lcovrc_tf="$workspace/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
   if [[ -f "$lcovrc" ]]; then
@@ -1083,7 +1064,6 @@ generate_coverage() {
   fi
 
   log "Step: Generate coverage (lcov + genhtml)"
-  # CI uses -d build/entservices-appgateway
   lcov -c -o coverage.info -d "$workspace/build/entservices-appgateway"
 
   lcov -r coverage.info \
@@ -1113,20 +1093,17 @@ main() {
   local do_test=1
   local do_cov=1
 
-  # Default toggles (can be overridden by env or flags)
   export ENABLE_PACKAGE_INSTALL="${ENABLE_PACKAGE_INSTALL:-0}"
   export ENABLE_SETUP_FILES="${ENABLE_SETUP_FILES:-0}"
   export ENABLE_VALGRIND="${ENABLE_VALGRIND:-0}"
   export ENABLE_COVERAGE="${ENABLE_COVERAGE:-1}"
   export BUILD_TYPE="${BUILD_TYPE:-Debug}"
 
-  # Minimal path defaults: no network fetches; skip mocks/testframework unless opted in.
   export MINIMAL_L1="${MINIMAL_L1:-1}"
   export ENABLE_FETCH_DEPS="${ENABLE_FETCH_DEPS:-0}"
   export ENABLE_BUILD_MOCKS="${ENABLE_BUILD_MOCKS:-0}"
   export ENABLE_BUILD_TESTFRAMEWORK="${ENABLE_BUILD_TESTFRAMEWORK:-0}"
 
-  # Do not force a default generator here; we'll auto-detect later (or honor user-provided CMAKE_GENERATOR).
   export CMAKE_GENERATOR="${CMAKE_GENERATOR:-}"
 
   while [[ $# -gt 0 ]]; do
@@ -1167,15 +1144,12 @@ main() {
   log "Workspace: $GITHUB_WORKSPACE"
   cd "$GITHUB_WORKSPACE"
 
-  # Base requirements
   require_cmd git
   require_cmd patch
   require_cmd cmake
 
-  # Choose a CMake generator for the build steps (unless user set one).
   detect_cmake_generator
 
-  # Optional steps mirroring CI
   install_packages_if_enabled
 
   if [[ "${ENABLE_FETCH_DEPS:-0}" == "1" ]]; then
@@ -1189,10 +1163,7 @@ main() {
     done
   fi
 
-  # trower-base64 install is required in CI; locally it may already exist.
-  # If meson/ninja/sudo are available, build it; otherwise warn.
   if command -v meson >/dev/null 2>&1 && command -v ninja >/dev/null 2>&1; then
-    # This typically requires sudo install.
     if sudo -n true >/dev/null 2>&1; then
       build_and_install_trower_base64 "$GITHUB_WORKSPACE"
     else
@@ -1202,8 +1173,7 @@ main() {
     warn "meson/ninja not found; skipping trower-base64 build/install."
   fi
 
-  # Patches require entservices-testframework repo to exist (private token in CI).
-  # Locally, users can clone it manually into workspace to enable these steps.
+  # Patch steps must never block the rest of the run.
   apply_patches_thundertools "$GITHUB_WORKSPACE"
   apply_patches_thunder "$GITHUB_WORKSPACE"
 
