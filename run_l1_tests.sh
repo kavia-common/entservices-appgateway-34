@@ -1327,7 +1327,16 @@ run_tests() {
 
 # PUBLIC_INTERFACE
 generate_coverage() {
-  # Generate lcov + genhtml report as CI does, outputting ./coverage/.
+  # Generate lcov + genhtml report, producing a dedicated AppGateway plugin report.
+  #
+  # Why:
+  #   The user requested an "AppGateway plugin coverage report". The previous implementation
+  #   generated a generic entservices-appgateway coverage report that included multiple
+  #   components and did not clearly isolate AppGateway plugin sources.
+  #
+  # Output:
+  #   - $workspace/coverage-appgateway-plugin/index.html  (HTML report)
+  #   - $workspace/coverage-appgateway-plugin.info        (filtered lcov tracefile)
   local workspace="${1:?workspace required}"
 
   if [[ "${ENABLE_COVERAGE:-1}" != "1" ]]; then
@@ -1350,10 +1359,17 @@ generate_coverage() {
     warn "No lcovrc found (checked: $lcovrc, $lcovrc_tf); continuing without it"
   fi
 
-  log "Step: Generate coverage (lcov + genhtml)"
-  lcov -c -o coverage.info -d "$workspace/build/entservices-appgateway"
+  log "Step: Generate coverage (lcov + genhtml) for AppGateway plugin"
 
-  lcov -r coverage.info \
+  # Capture coverage from the AppGateway build directory (where .gcda/.gcno live).
+  local build_dir="$workspace/build/entservices-appgateway"
+  local raw_info="$workspace/coverage.raw.info"
+  local filtered_info="$workspace/coverage-appgateway-plugin.info"
+
+  lcov -c -o "$raw_info" -d "$build_dir"
+
+  # First remove known irrelevant/system paths.
+  lcov -r "$raw_info" \
     '/usr/include/*' \
     '*/build/entservices-appgateway/_deps/*' \
     '*/install/usr/include/*' \
@@ -1361,12 +1377,21 @@ generate_coverage() {
     '*/Tests/mocks/*' \
     '*/Tests/L1Tests/tests/*' \
     '*/Thunder/*' \
-    -o filtered_coverage.info
+    -o "$filtered_info"
 
-  rm -rf "$workspace/coverage"
-  genhtml -o "$workspace/coverage" -t "entservices-appgateway coverage" filtered_coverage.info
+  # Then keep only AppGateway plugin sources.
+  # Note: lcov's --extract patterns match tracefile "SF:" paths. We include both absolute
+  # and wildcard variants for robustness across environments.
+  lcov --extract "$filtered_info" \
+    "*/AppGateway/*" \
+    "$workspace/AppGateway/*" \
+    -o "$filtered_info"
 
-  log "Coverage HTML generated at: $workspace/coverage/index.html"
+  local out_dir="$workspace/coverage-appgateway-plugin"
+  rm -rf "$out_dir"
+  genhtml -o "$out_dir" -t "AppGateway plugin coverage" "$filtered_info"
+
+  log "AppGateway plugin coverage HTML generated at: $out_dir/index.html"
 }
 
 ###############################################################################
