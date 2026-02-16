@@ -254,20 +254,30 @@ safe_stage_thunder_install_artifacts() {
   mkdir -p "$thunder_install_prefix"
 
   # Use rsync if available (best for copying trees), otherwise fall back to cp -a.
-  local copy_tree() {
-    local src="${1:?src required}"
-    local dst="${2:?dst required}"
-    if [[ ! -d "$src" ]]; then
-      return 0
-    fi
-    mkdir -p "$dst"
-    if command -v rsync >/dev/null 2>&1; then
-      rsync -a --delete "$src/" "$dst/"
-    else
-      rm -rf "$dst"/*
-      cp -a "$src/." "$dst/"
-    fi
-  }
+  #
+  # NOTE: bash does NOT allow `local fn() {}` nested function definitions.
+  # The prior code used `local copy_tree() { ... }`, which triggers:
+  #   syntax error near unexpected token `('
+  #
+  # We implement the helper as a small subshell script and invoke it with args.
+  local copy_tree_sh
+  copy_tree_sh="$(cat <<'COPY_TREE_SH'
+src="$1"
+dst="$2"
+
+if [[ ! -d "$src" ]]; then
+  exit 0
+fi
+
+mkdir -p "$dst"
+if command -v rsync >/dev/null 2>&1; then
+  rsync -a --delete "$src/" "$dst/"
+else
+  rm -rf "$dst"/*
+  cp -a "$src/." "$dst/"
+fi
+COPY_TREE_SH
+)"
 
   # Preferred source: the install tree inside the build directory (common with CMake).
   local staged_root="$thunder_build_dir/_install"
@@ -281,9 +291,9 @@ safe_stage_thunder_install_artifacts() {
 
   # If no staged install tree exists, fall back to copying from known output locations.
   if [[ -d "$staged_usr" ]]; then
-    copy_tree "$staged_usr/include" "$thunder_install_prefix/include"
-    copy_tree "$staged_usr/lib" "$thunder_install_prefix/lib"
-    copy_tree "$staged_usr/etc" "$thunder_install_prefix/etc"
+    bash -c "$copy_tree_sh" -- "$staged_usr/include" "$thunder_install_prefix/include"
+    bash -c "$copy_tree_sh" -- "$staged_usr/lib" "$thunder_install_prefix/lib"
+    bash -c "$copy_tree_sh" -- "$staged_usr/etc" "$thunder_install_prefix/etc"
     return 0
   fi
 
@@ -294,7 +304,7 @@ safe_stage_thunder_install_artifacts() {
   # Downstream builds typically rely on installed headers; if missing, they likely already exist from
   # a prior successful install. We still try common locations below.
   if [[ -d "$thunder_build_dir/include" ]]; then
-    copy_tree "$thunder_build_dir/include" "$thunder_install_prefix/include"
+    bash -c "$copy_tree_sh" -- "$thunder_build_dir/include" "$thunder_install_prefix/include"
   fi
 
   # Libraries: copy from build tree if present.
