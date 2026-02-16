@@ -125,6 +125,67 @@ require_cmd() {
 }
 
 # PUBLIC_INTERFACE
+ensure_python_jsonref() {
+  """Ensure Python package 'jsonref' is available for JsonGenerator (non-interactive).
+
+  Thunder/ThunderTools JsonGenerator depends on the Python module `jsonref`.
+  Some environments (local runners/CI images) do not have it preinstalled, which causes
+  CMake configure to fail in FindJsonGenerator.cmake with:
+    "Install jsonref first" / "JsonGenerator generator failed."
+
+  Strategy (non-interactive, no entservices-testframework dependency):
+    1) Prefer `python3 -m pip install --user` (does not require sudo).
+    2) If pip is missing, attempt to bootstrap via `python3 -m ensurepip` (non-interactive).
+    3) If install is not possible, fail fast with a clear error message.
+
+  Env controls:
+    ENSURE_JSONREF=1 (default) to enable this step; set to 0 to skip.
+  """
+  if [[ "${ENSURE_JSONREF:-1}" != "1" ]]; then
+    log "Skipping jsonref ensure step (ENSURE_JSONREF=0)."
+    return 0
+  fi
+
+  if ! command -v python3 >/dev/null 2>&1; then
+    err "python3 not found; cannot ensure 'jsonref' for JsonGenerator. Install python3 or set ENSURE_JSONREF=0 to skip."
+    return 1
+  fi
+
+  # If already importable, we're done.
+  if python3 -c "import jsonref" >/dev/null 2>&1; then
+    log "Python dependency satisfied: jsonref is already importable."
+    return 0
+  fi
+
+  log "Python dependency missing: jsonref. Attempting non-interactive install (user-site)."
+
+  # Ensure pip exists (try ensurepip first, then proceed).
+  if ! python3 -m pip --version >/dev/null 2>&1; then
+    warn "pip not available for python3; attempting to bootstrap with: python3 -m ensurepip --upgrade"
+    # ensurepip may not be present in minimal distros; keep best-effort but non-interactive.
+    python3 -m ensurepip --upgrade >/dev/null 2>&1 || true
+  fi
+
+  if ! python3 -m pip --version >/dev/null 2>&1; then
+    err "python3 pip is not available and could not be bootstrapped. Please install python3-pip (or equivalent) or set ENSURE_JSONREF=0 to skip."
+    return 1
+  fi
+
+  # Install jsonref to the current user's site-packages (no sudo).
+  # Use --disable-pip-version-check to keep output clean and avoid network chatter.
+  # Use --no-input to ensure strictly non-interactive behavior.
+  python3 -m pip install --user --no-input --disable-pip-version-check -q jsonref
+
+  # Re-check import (fail fast if still missing).
+  if ! python3 -c "import jsonref" >/dev/null 2>&1; then
+    err "Failed to make 'jsonref' importable after pip install. Check pip/user-site permissions and PYTHONPATH."
+    return 1
+  fi
+
+  log "Installed/ensured Python dependency: jsonref."
+}
+
+# PUBLIC_INTERFACE
 detect_cmake_generator() {
   # Detect a working CMake generator for local builds.
   #
@@ -1244,6 +1305,10 @@ main() {
   detect_cmake_generator
 
   install_packages_if_enabled
+
+  # Thunder's CMake configure may invoke JsonGenerator which requires the Python module `jsonref`.
+  # Ensure it is present *before* any Thunder/ThunderTools configure steps run.
+  ensure_python_jsonref
 
   if [[ "${ENABLE_FETCH_DEPS:-0}" == "1" ]]; then
     ensure_l1_workflow_repos_present "$GITHUB_WORKSPACE"
