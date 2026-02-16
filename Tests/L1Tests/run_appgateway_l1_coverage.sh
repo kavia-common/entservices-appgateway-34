@@ -48,13 +48,12 @@ require_cmd() {
 
 # PUBLIC_INTERFACE
 infer_ws() {
-  """Infer workspace root (WS) following run_l1_tests.sh.md conventions.
-
-  The L1 docs assume a workspace containing sibling dirs such as:
-    Thunder/, ThunderTools/, entservices-testframework/, build/, install/
-  This function walks upwards from this script location trying to find a
-  directory that looks like that workspace.
-  """
+  # Infer workspace root (WS) following run_l1_tests.sh.md conventions.
+  #
+  # The L1 docs assume a workspace containing sibling dirs such as:
+  #   Thunder/, ThunderTools/, entservices-testframework/, build/, install/
+  # This function walks upwards from the given start directory trying to find a
+  # directory that looks like that workspace.
   local start_dir="$1"
   local d="$start_dir"
   while true; do
@@ -83,7 +82,7 @@ infer_ws() {
 
 # PUBLIC_INTERFACE
 pick_first_existing_dir() {
-  """Print the first directory from arguments that exists, else empty string."""
+  # Print the first directory from arguments that exists, else empty string.
   for candidate in "$@"; do
     if [[ -n "$candidate" && -d "$candidate" ]]; then
       echo "$candidate"
