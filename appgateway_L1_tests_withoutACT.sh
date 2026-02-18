@@ -745,10 +745,10 @@ log "[Step 23] Build entservices-appgateway (configure/build/install with covera
 
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
-# IMPORTANT:
-#   Step 23 must configure from the entservices-appgateway-34 repo root, NOT the
-#   workspace root. The authoritative failing log shows cmake was run with a
-#   workspace-root -S path that has no CMakeLists.txt.
+# IMPORTANT (per attached failing log):
+#   DO NOT configure from WORKSPACE_ROOT (e.g. /home/kavia/workspace/code-generation)
+#   because it does not contain this repo's CMakeLists.txt.
+#   The CMake -S *must* be the entservices-appgateway-34 repository root.
 APPGATEWAY_SRC_DIR="${REPO_DIR}"
 
 EXTRA_APPGW_CMAKE_ARGS=(
@@ -764,14 +764,20 @@ if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
 
-# Log the FULL configure command line that will be used (including PLUGIN_APPGATEWAY),
-# since the build log is used for debugging missing installed plugin .so issues.
+# Log the FULL configure command line that will be used, and ensure it EXACTLY
+# matches the actual invocation (including generator selection).
+APPGW_CMAKE_GENERATOR_ARGS=()
+if have_cmd ninja; then
+  APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
+fi
+
 (
-  # Print a command that mirrors cmake_configure_build_install() as closely as possible.
-  # Note: Generator selection (-G Ninja) is handled inside cmake_configure_build_install(),
-  # so we log the core configure args that matter for correctness.
   printf '==> entservices-appgateway: Full CMake configure command: '
-  printf 'cmake -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
+  printf 'cmake'
+  for a in "${APPGW_CMAKE_GENERATOR_ARGS[@]}"; do
+    printf ' %q' "${a}"
+  done
+  printf ' -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
     "${APPGATEWAY_SRC_DIR}" \
     "${APPGATEWAY_BUILD_DIR}" \
     "${INSTALL_USR}"
@@ -781,6 +787,8 @@ fi
   printf '\n'
 )
 
+# Use the same helper for build/install, but ensure the logged configure command
+# above matches what the helper will execute.
 cmake_configure_build_install \
   "entservices-appgateway" \
   "${APPGATEWAY_SRC_DIR}" \
