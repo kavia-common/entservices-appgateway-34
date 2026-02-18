@@ -196,6 +196,10 @@ if (RDK_SERVICES_L1_TEST)
             ${CMAKE_SOURCE_DIR}/AppGateway
             ${CMAKE_SOURCE_DIR}/helpers
             ${CMAKE_SOURCE_DIR}/Tests/mocks
+            # Thunder headers are included as <plugins/...>, so the include path must
+            # point at Thunder/Source (which contains the "plugins/" folder).
+            ${CMAKE_SOURCE_DIR}/../Thunder/Source
+            # Keep existing include for any headers directly under Source/plugins.
             ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
             ${CMAKE_INSTALL_PREFIX}/include
             )
