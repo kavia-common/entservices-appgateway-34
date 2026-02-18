@@ -191,7 +191,20 @@ if (RDK_SERVICES_L1_TEST)
             ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
             )
 
-    target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE ${TEST_LIB})
+    # Explicitly link gtest/gmock and the AppGateway plugin implementation.
+    # The build log shows gtest/gmock headers are found under ${CMAKE_INSTALL_PREFIX}/include,
+    # but the link step is missing the corresponding libs.
+    find_package(GTest REQUIRED)
+
+    target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+            ${TEST_LIB}
+            # Provides WPEFramework::Plugin::AppGatewayImplementation symbols
+            ${NAMESPACE}AppGateway
+            # Provides testing::Test, gmock expectation machinery, and main()
+            GTest::gtest
+            GTest::gmock
+            GTest::gtest_main
+            )
 
     # Install to ${CMAKE_INSTALL_PREFIX}/bin => install/usr/bin in the workflow.
     install(TARGETS ${APPGATEWAY_L1_TEST_EXE} RUNTIME DESTINATION bin)
