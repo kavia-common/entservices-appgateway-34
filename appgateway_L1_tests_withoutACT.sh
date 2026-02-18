@@ -744,14 +744,32 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
   export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
   export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
-  if ! have_cmd AppGatewayL1Test; then
-    err "AppGatewayL1Test not found on PATH. Expected it in: ${INSTALL_USR}/bin"
-    err "Ensure Step 23 built/installed this repo with -DRDK_SERVICES_L1_TEST=ON (so Tests/L1Tests builds + installs the executable)."
+  # Prefer the installed binary (expected under ${INSTALL_USR}/bin), but fall back to the build tree
+  # to make the workflow robust if install() destinations differ across environments.
+  TEST_BIN=""
+
+  if have_cmd AppGatewayL1Test; then
+    TEST_BIN="AppGatewayL1Test"
+  else
+    # Common build-tree locations for the CMake target created under Tests/L1Tests.
+    # Note: this path assumes the repo was configured with -S ${REPO_DIR} -B ${APPGATEWAY_BUILD_DIR}.
+    if [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test" ]]; then
+      TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test"
+    elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe" ]]; then
+      # Just in case someone builds on a Windows-like environment.
+      TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe"
+    fi
+  fi
+
+  if [[ -z "${TEST_BIN}" ]]; then
+    err "AppGatewayL1Test not found."
+    err "Checked PATH (expected: ${INSTALL_USR}/bin) and build tree under: ${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/"
+    err "Ensure Step 23 built this repo with -DRDK_SERVICES_L1_TEST=ON and that the target AppGatewayL1Test exists."
     exit 1
   fi
 
-  # Run the test binary (gtest).
-  AppGatewayL1Test
+  log "Running L1 test binary: ${TEST_BIN}"
+  "${TEST_BIN}"
 
   # Keep an easy-to-find copy in repo root.
   cp -f "$(pwd)/AppGatewayL1TestResults.json" "${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
