@@ -823,11 +823,10 @@ ls -la "${APPGW_PLUGIN_SRC}" || true
 
 # Install/copy into the system plugin directory required by AppGatewayL1Test:
 #   Tests/L1Tests/CMakeLists.txt prefers:
-#     /usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+#     /usr/lib/wpeframework/plugins/<AppGateway plugin .so>
 #
-# Ensure the final path AND filename match that expectation.
-EXPECTED_SO_BASENAME="libWPEFrameworkAppGateway.so"
-SYSTEM_PLUGIN_SO_PATH="${SYSTEM_PLUGIN_DIR}/${EXPECTED_SO_BASENAME}"
+# Do not hardcode the basename; copy with the same filename that the build/install produced.
+SYSTEM_PLUGIN_SO_PATH="${SYSTEM_PLUGIN_DIR}/$(basename "${APPGW_PLUGIN_SRC}")"
 
 log "[Step 23] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_SO_PATH}"
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
@@ -845,8 +844,8 @@ else
   fi
 fi
 
-log "[OK] System plugin path now contains:"
-ls -la "${SYSTEM_PLUGIN_SO_PATH}" || true
+log "[OK] System plugin dir now contains:"
+ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || ls -la "${SYSTEM_PLUGIN_DIR}" || true
 
 # -----------------------------------------------------------------------------#
 # Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)

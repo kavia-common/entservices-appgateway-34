@@ -225,27 +225,43 @@ if (RDK_SERVICES_L1_TEST)
     #     plugin sources/targets are pulled into the test link.
     #
     # Primary expected install location per task requirement:
-    #   /usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+    #   /usr/lib/wpeframework/plugins/<plugin>.so
     #
     # Secondary fallback:
-    #   ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+    #   ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/<plugin>.so
     #
-    # Note: When CMAKE_INSTALL_PREFIX=/usr, both paths are the same.
-    set(APPGATEWAY_PLUGIN_SO_SYSTEM "/usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so")
-    set(APPGATEWAY_PLUGIN_SO_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so")
+    # NOTE:
+    #   The actual filename depends on the ${NAMESPACE} used by the WPEFramework
+    #   build (often "WPEFramework"), so we search by pattern rather than
+    #   hardcoding "libWPEFrameworkAppGateway.so".
+    set(APPGATEWAY_PLUGIN_DIR_SYSTEM "/usr/lib/wpeframework/plugins")
+    set(APPGATEWAY_PLUGIN_DIR_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins")
 
-    if (EXISTS "${APPGATEWAY_PLUGIN_SO_SYSTEM}")
-        message(STATUS "Linking AppGatewayL1Test against installed plugin: ${APPGATEWAY_PLUGIN_SO_SYSTEM}")
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO_SYSTEM}")
-    elseif (EXISTS "${APPGATEWAY_PLUGIN_SO_PREFIX}")
-        message(STATUS "Linking AppGatewayL1Test against installed plugin: ${APPGATEWAY_PLUGIN_SO_PREFIX}")
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO_PREFIX}")
+    file(GLOB APPGATEWAY_PLUGIN_SO_SYSTEM
+        "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so"
+        "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so.*"
+    )
+    file(GLOB APPGATEWAY_PLUGIN_SO_PREFIX
+        "${APPGATEWAY_PLUGIN_DIR_PREFIX}/*AppGateway*.so"
+        "${APPGATEWAY_PLUGIN_DIR_PREFIX}/*AppGateway*.so.*"
+    )
+
+    # Prefer the system dir (explicit requirement), then prefix dir.
+    if (APPGATEWAY_PLUGIN_SO_SYSTEM)
+        list(GET APPGATEWAY_PLUGIN_SO_SYSTEM 0 APPGATEWAY_PLUGIN_SO)
+        message(STATUS "Linking AppGatewayL1Test against installed plugin (system): ${APPGATEWAY_PLUGIN_SO}")
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO}")
+    elseif (APPGATEWAY_PLUGIN_SO_PREFIX)
+        list(GET APPGATEWAY_PLUGIN_SO_PREFIX 0 APPGATEWAY_PLUGIN_SO)
+        message(STATUS "Linking AppGatewayL1Test against installed plugin (prefix): ${APPGATEWAY_PLUGIN_SO}")
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO}")
     else()
         message(FATAL_ERROR
-            "AppGateway plugin shared library not found. Expected one of:\n"
-            "  - ${APPGATEWAY_PLUGIN_SO_SYSTEM}\n"
-            "  - ${APPGATEWAY_PLUGIN_SO_PREFIX}\n"
-            "Ensure configure uses -DPLUGIN_APPGATEWAY=ON and the plugin has been installed.")
+            "AppGateway plugin shared library not found.\n"
+            "Searched for '*AppGateway*.so' in:\n"
+            "  - ${APPGATEWAY_PLUGIN_DIR_SYSTEM}\n"
+            "  - ${APPGATEWAY_PLUGIN_DIR_PREFIX}\n"
+            "Ensure configure uses -DPLUGIN_APPGATEWAY=ON and the plugin has been built+installed.")
     endif()
 
     # Keep existing Thunder plugin host linkage.
