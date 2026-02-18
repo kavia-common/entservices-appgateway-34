@@ -169,8 +169,38 @@ if (RDK_SERVICES_L1_TEST)
 
     add_executable(${APPGATEWAY_L1_TEST_EXE} ${TEST_SRC})
 
+    # -------------------------------------------------------------------------
+    # Fix linker errors:
+    #   undefined reference to WPEFramework::Plugin::AppGatewayImplementation::Resolve/Configure/typeinfo
+    #
+    # Root cause:
+    #   The L1 test includes AppGatewayImplementation headers and instantiates
+    #   Core::Sink<AppGatewayImplementation>, but the AppGatewayImplementation.cpp
+    #   translation unit is not linked into the executable (and the AppGateway
+    #   plugin .so is not reliably built/available in coverage-only builds).
+    #
+    # Solution:
+    #   Build a small object library from the required in-tree sources and link
+    #   the resulting objects directly into AppGatewayL1Test.
+    # -------------------------------------------------------------------------
+    add_library(AppGatewayL1Test_AppGatewayObjects OBJECT
+            ${CMAKE_SOURCE_DIR}/AppGateway/AppGatewayImplementation.cpp
+            ${CMAKE_SOURCE_DIR}/AppGateway/Resolver.cpp
+            )
+
+    # The implementation sources rely on the same Thunder R4 selection as the tests/mocks.
+    target_compile_definitions(AppGatewayL1Test_AppGatewayObjects PRIVATE UNIT_TEST USE_THUNDER_R4)
+
+    target_include_directories(AppGatewayL1Test_AppGatewayObjects
+            PRIVATE
+            ${CMAKE_SOURCE_DIR}/AppGateway
+            ${CMAKE_SOURCE_DIR}/helpers
+            ${CMAKE_SOURCE_DIR}/Tests/mocks
+            ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+            ${CMAKE_INSTALL_PREFIX}/include
+            )
+
     # Mirror compile definitions/includes/linking from the shared library target.
-    # Compile tests (and local mocks) against Thunder R4 interfaces.
     target_compile_definitions(${APPGATEWAY_L1_TEST_EXE} PRIVATE UNIT_TEST USE_THUNDER_R4)
 
     target_link_options(${APPGATEWAY_L1_TEST_EXE} PRIVATE "-Wl,-wrap,opendir")
@@ -191,58 +221,17 @@ if (RDK_SERVICES_L1_TEST)
             ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
             )
 
-    # Explicitly link gtest/gmock and the AppGateway plugin implementation.
-    # The build log shows gtest/gmock headers are found under ${CMAKE_INSTALL_PREFIX}/include,
-    # but the link step is missing the corresponding libs.
     find_package(GTest REQUIRED)
 
-    # Link against the AppGateway plugin built by this repo, rather than trying
-    # to link a non-existent -lWPEFrameworkAppGateway (seen in failing link line).
-    #
-    # Note: This repository defines the plugin target as:
-    #   add_library(${NAMESPACE}AppGateway SHARED ...)
-    # (see AppGateway/CMakeLists.txt), i.e. typically WPEFrameworkAppGateway.
-    #
-    # However, the failing link line shows CMake is *not* linking that target
-    # (it is linking "-lWPEFrameworkAppGateway" by name instead).
-    # To make this robust and ensure reconfigure/build picks it up, we:
-    #   1) Prefer linking the in-tree CMake target if it exists.
-    #   2) Otherwise link directly to the built .so file if present (generator
-    #      expression via $<TARGET_FILE:...> is handled by (1)).
-    #   3) As a last resort, do NOT add -lWPEFrameworkAppGateway again; keep build
-    #      failure explicit so it is detectable.
-    set(_APPGATEWAY_LINK_TARGET "")
-    if (TARGET ${NAMESPACE}AppGateway)
-        set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}AppGateway)
-    elseif (TARGET ${NAMESPACE}Plugin::AppGateway)
-        set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}Plugin::AppGateway)
-    endif()
-
-    if (_APPGATEWAY_LINK_TARGET STREQUAL "")
-        message(WARNING
-            "AppGateway plugin target not found in this build. "
-            "AppGatewayL1Test will be built without explicit in-tree AppGateway linkage; "
-            "this may cause unresolved symbols if the toolchain injects -lWPEFrameworkAppGateway.")
-    endif()
-
-    if (NOT _APPGATEWAY_LINK_TARGET STREQUAL "")
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-                ${TEST_LIB}
-                ${_APPGATEWAY_LINK_TARGET}
-                # Provides testing::Test, gmock expectation machinery, and main()
-                GTest::gtest
-                GTest::gmock
-                GTest::gtest_main
-                )
-    else()
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-                ${TEST_LIB}
-                # Provides testing::Test, gmock expectation machinery, and main()
-                GTest::gtest
-                GTest::gmock
-                GTest::gtest_main
-                )
-    endif()
+    target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+            ${TEST_LIB}
+            # Link the actual implementation objects providing AppGatewayImplementation symbols.
+            $<TARGET_OBJECTS:AppGatewayL1Test_AppGatewayObjects>
+            # Provides testing::Test, gmock expectation machinery, and main()
+            GTest::gtest
+            GTest::gmock
+            GTest::gtest_main
+            )
 
     # Install to ${CMAKE_INSTALL_PREFIX}/bin => install/usr/bin in the workflow.
     install(TARGETS ${APPGATEWAY_L1_TEST_EXE} RUNTIME DESTINATION bin)
