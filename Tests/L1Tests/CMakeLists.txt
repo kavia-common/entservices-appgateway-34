@@ -247,14 +247,27 @@ if (RDK_SERVICES_L1_TEST)
 
     find_package(GTest REQUIRED)
 
+    # NOTE:
+    # The `Plugins` symbol is the module-name symbol emitted by Thunder's plugins Module.cpp via:
+    #   MODULE_NAME_DECLARATION(BUILD_REFERENCE)
+    # It is required by Core::ServiceMetadata<...>::Module() (Services.h) when plugin code is linked
+    # directly into this executable (as object files). Some linkers with --as-needed may drop the
+    # Plugins library if it appears before the objects, so we link ${TEST_LIB} again at the end
+    # to ensure the symbol provider is retained.
     target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-            ${TEST_LIB}
             # Link the actual implementation objects providing AppGatewayImplementation symbols.
             $<TARGET_OBJECTS:AppGatewayL1Test_AppGatewayObjects>
+
+            # Provides `Plugins` module symbol (and other plugin host glue).
+            ${TEST_LIB}
+
             # Provides testing::Test, gmock expectation machinery, and main()
             GTest::gtest
             GTest::gmock
             GTest::gtest_main
+
+            # Re-assert after objects to avoid being dropped by --as-needed ordering.
+            ${TEST_LIB}
             )
 
     # Install to ${CMAKE_INSTALL_PREFIX}/bin => install/usr/bin in the workflow.
