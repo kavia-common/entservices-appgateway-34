@@ -81,8 +81,9 @@ public:
     MOCK_METHOD(void, AddRef, (), (const, override));
     MOCK_METHOD(uint32_t, Release, (), (const, override));
 
+    // Exchange::IAppNotifications expects its own NotificationContext type.
     MOCK_METHOD(Core::hresult, Subscribe,
-        (const Exchange::INotificationSink::NotificationContext& context,
+        (const Exchange::IAppNotifications::NotificationContext& context,
          const bool subscribe,
          const string& callsign,
          const string& event),
@@ -95,8 +96,11 @@ static Exchange::GatewayContext MakeContext()
 {
     Exchange::GatewayContext c;
     c.appId = "test.app";
-    c.connectionId = "conn-1";
-    c.requestId = "req-1";
+
+    // In current Exchange::GatewayContext these are numeric identifiers.
+    c.connectionId = 1;
+    c.requestId = 1;
+
     return c;
 }
 
