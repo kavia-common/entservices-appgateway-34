@@ -196,16 +196,20 @@ if (RDK_SERVICES_L1_TEST)
     # but the link step is missing the corresponding libs.
     find_package(GTest REQUIRED)
 
-    # Link against the *target* produced by this repo (WPEFramework::Plugin::AppGateway),
-    # rather than trying to link an (often non-existent) -lWPEFrameworkAppGateway import library.
+    # Link against the AppGateway plugin target built by this repo, rather than
+    # trying to link a non-existent -lWPEFrameworkAppGateway library name.
     #
-    # This ensures the test links even when the plugin is not installed into
-    # ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins yet (or when the installed
-    # filename is not libWPEFrameworkAppGateway.so).
+    # Prefer the canonical exported target name if available.
+    if (TARGET ${NAMESPACE}Plugin::AppGateway)
+        set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}Plugin::AppGateway)
+    else()
+        # Fallback for environments where only the legacy/non-namespaced target exists.
+        set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}AppGateway)
+    endif()
+
     target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
             ${TEST_LIB}
-            # AppGateway plugin shared library target built from AppGateway/CMakeLists.txt
-            ${NAMESPACE}AppGateway
+            ${_APPGATEWAY_LINK_TARGET}
             # Provides testing::Test, gmock expectation machinery, and main()
             GTest::gtest
             GTest::gmock

@@ -280,10 +280,9 @@ build_dir_configured() {
 
 # PUBLIC_INTERFACE
 is_component_installed() {
-  """Return 0 if an install prefix appears to contain the given component outputs.
-
-  This is a heuristic detection used to skip expensive rebuilds in repeated runs.
-  """
+  # Return 0 if an install prefix appears to contain the given component outputs.
+  #
+  # This is a heuristic detection used to skip expensive rebuilds in repeated runs.
   local component="$1"
   local prefix_usr="$2"
 
