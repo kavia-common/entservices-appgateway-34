@@ -682,6 +682,153 @@ log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
 log "Per request: step 24 is not required for now."
 
 log "[DONE] Steps 1–24 completed (as applicable in this container; steps 22 and 24 skipped per request)."
+
+# -----------------------------------------------------------------------------
+# Steps 25–29 (per user_input_ref, authoritative)
+# -----------------------------------------------------------------------------
+
+# -----------------------------------------------------------------------------
+# Step 25: Set up files (COMMENTED for now)
+# -----------------------------------------------------------------------------
+# 25  Set up files  Create a set of filesystem paths/files and device nodes.
+#                   Often required for test runtime. May need root/privileged container.
+#                   Per request: COMMENT this for now while running actual testing.
+#
+# The original GitHub Actions workflow (L1-tests.yml) uses sudo + mknod heavily.
+# Keeping a reference snippet here (commented) so it can be enabled if/when needed.
+#
+# log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/device nodes)"
+# sudo mkdir -p -m 777 \
+#   /tmp/test/testApp/etc/apps \
+#   /opt/persistent \
+#   /opt/secure \
+#   /opt/secure/reboot \
+#   /opt/secure/persistent \
+#   /opt/secure/persistent/System \
+#   /opt/persistent/storageManager \
+#   /opt/preinstall \
+#   /opt/logs \
+#   /lib/rdk \
+#   /run/media/sda1/logs/PreviousLogs \
+#   /run/sda1/UsbTestFWUpdate \
+#   /run/sda1/UsbProdFWUpdate \
+#   /run/sda2 \
+#   /var/run/wpa_supplicant \
+#   /tmp/bus/usb/devices/100-123 \
+#   /tmp/bus/usb/devices/101-124 \
+#   /tmp/block/sda/device \
+#   /tmp/block/sdb/device \
+#   /dev/disk/by-id \
+#   /dev
+# # Device nodes creation (requires privileged container/root):
+# # if [ ! -f /dev/sda  ]; then sudo mknod /dev/sda  c 240 0; fi
+# # if [ ! -f /dev/sda1 ]; then sudo mknod /dev/sda1 c 240 0; fi
+# # if [ ! -f /dev/sda2 ]; then sudo mknod /dev/sda2 c 240 0; fi
+# # if [ ! -f /dev/sdb  ]; then sudo mknod /dev/sdb  c 240 0; fi
+# # if [ ! -f /dev/sdb1 ]; then sudo mknod /dev/sdb1 c 240 0; fi
+# # if [ ! -f /dev/sdb2 ]; then sudo mknod /dev/sdb2 c 240 0; fi
+# # Touch/chmod omitted here; refer to .github/workflows/L1-tests.yml for full list.
+
+# -----------------------------------------------------------------------------
+# Step 26: Run unit tests without valgrind (REQUIRED)
+# -----------------------------------------------------------------------------
+log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for coverage)"
+
+# NOTE:
+# - The workflow runs RdkServicesL1Test from PATH=$GITHUB_WORKSPACE/install/usr/bin
+# - It sets LD_LIBRARY_PATH to include both install/usr/lib and install/usr/lib/wpeframework/plugins
+# - It writes GTEST JSON output and copies it to a stable file name.
+#
+# In this repo/container-friendly script, we use INSTALL_USR and REPO_DIR to mirror that behavior.
+# This step will fail if RdkServicesL1Test is not present in ${INSTALL_USR}/bin (e.g., if
+# entservices-testframework was not built/installed).
+(
+  export PATH="${INSTALL_USR}/bin:${PATH}"
+  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+  export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+
+  if ! have_cmd RdkServicesL1Test; then
+    err "RdkServicesL1Test not found on PATH. Ensure it is installed to ${INSTALL_USR}/bin."
+    err "Note: per earlier steps, entservices-testframework build was skipped; enable it to produce this binary."
+    exit 1
+  fi
+
+  RdkServicesL1Test
+
+  # Keep an easy-to-find copy in repo root (workflow parity).
+  cp -f "$(pwd)/rdkL1TestResults.json" "${REPO_DIR}/rdkL1TestResultsWithoutValgrind.json"
+  rm -f "$(pwd)/rdkL1TestResults.json"
+)
+log "[OK] Step 26 complete: ${REPO_DIR}/rdkL1TestResultsWithoutValgrind.json"
+
+# -----------------------------------------------------------------------------
+# Step 27: Run unit tests with valgrind (NOT REQUIRED for now)
+# -----------------------------------------------------------------------------
+log "[Step 27] Run unit tests with valgrind (NOT REQUIRED - skipped; focusing on coverage report)"
+
+# -----------------------------------------------------------------------------
+# Step 28: Generate coverage (REQUIRED)
+# -----------------------------------------------------------------------------
+log "[Step 28] Generate coverage (REQUIRED)"
+
+# The workflow copies an lcov config from entservices-testframework. In this repo clone,
+# entservices-testframework may not be present; we attempt best-effort:
+# 1) Prefer local checkout if user has it adjacent to this repo (REPO_DIR/entservices-testframework)
+# 2) Otherwise, warn and proceed without custom ~/.lcovrc
+LCOVRC_SRC_1="${REPO_DIR}/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
+LCOVRC_SRC_2="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
+
+if [[ -f "${LCOVRC_SRC_1}" ]]; then
+  log "Using lcovrc: ${LCOVRC_SRC_1}"
+  cp "${LCOVRC_SRC_1}" "${HOME}/.lcovrc"
+elif [[ -f "${LCOVRC_SRC_2}" ]]; then
+  log "Using lcovrc: ${LCOVRC_SRC_2}"
+  cp "${LCOVRC_SRC_2}" "${HOME}/.lcovrc"
+else
+  warn "lcovrc (.lcovrc_l1) not found; proceeding with default lcov configuration."
+fi
+
+# Coverage capture directory must match where this repo was built with coverage flags.
+# We mirror the workflow's focus: -d build/entservices-appgateway (here: ${APPGATEWAY_BUILD_DIR}).
+if [[ ! -d "${APPGATEWAY_BUILD_DIR}" ]]; then
+  err "AppGateway build dir not found for coverage capture: ${APPGATEWAY_BUILD_DIR}"
+  err "Step 23 should have built this repo with coverage flags into that directory."
+  exit 1
+fi
+
+# Produce coverage outputs under repo root (matches workflow artifact paths).
+COVERAGE_DIR="${REPO_DIR}/coverage"
+COVERAGE_INFO="${REPO_DIR}/coverage.info"
+FILTERED_INFO="${REPO_DIR}/filtered_coverage.info"
+
+rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" || true
+
+lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
+
+lcov -r "${COVERAGE_INFO}" \
+  '/usr/include/*' \
+  "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
+  '*/install/usr/include/*' \
+  '*/Tests/headers/*' \
+  '*/Tests/mocks/*' \
+  '*/Tests/L1Tests/tests/*' \
+  '*/Thunder/*' \
+  -o "${FILTERED_INFO}"
+
+genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway coverage" "${FILTERED_INFO}"
+
+log "[OK] Coverage generated at: ${COVERAGE_DIR}/index.html"
+
+# -----------------------------------------------------------------------------
+# Step 29: Upload artifacts (COMMENTED for now)
+# -----------------------------------------------------------------------------
+# 29 Upload artifacts is GitHub Actions only. Locally, keep:
+#   - ${REPO_DIR}/coverage/
+#   - ${REPO_DIR}/rdkL1TestResultsWithoutValgrind.json
+#   - ${REPO_DIR}/coverage.info, ${REPO_DIR}/filtered_coverage.info
+#   - valgrind_log (if step 27 is enabled in future)
+# log "[Step 29] Upload artifacts (COMMENTED - not applicable locally)"
+
 echo "Summary:"
 echo "  REPO_DIR=${REPO_DIR}"
 echo "  WORKSPACE_ROOT=${WORKSPACE_ROOT}"
@@ -693,3 +840,4 @@ echo "  BUILD_ROOT=${BUILD_ROOT}"
 echo "  INSTALL_PREFIX=${INSTALL_USR}"
 echo "  COVERAGE_TOOLCHAIN_FILE=${COVERAGE_TOOLCHAIN_FILE}"
 echo "  APPGATEWAY_BUILD_DIR=${APPGATEWAY_BUILD_DIR}"
+echo "  COVERAGE_DIR=${COVERAGE_DIR:-}"
