@@ -112,6 +112,18 @@ endif (RDK_SERVICES_L1_TEST)
 
 include_directories(${TEST_INC})
 
+# Ensure gtest/gmock headers are discoverable when googletest is installed into the
+# workflow prefix (see build log: install/usr/include/{gtest,gmock} exists but is
+# not in the compile command).
+#
+# Note: We intentionally keep this minimal (header discovery only) because this
+# repo's tests primarily use header-only gmock macros and the environment may
+# already provide the appropriate gtest/gmock libs via toolchain or other linkage.
+target_include_directories(${MODULE_NAME}
+        PRIVATE
+        ${CMAKE_INSTALL_PREFIX}/include
+)
+
 target_link_directories(${MODULE_NAME} PUBLIC ${CMAKE_INSTALL_PREFIX}/lib ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins)
 
 target_link_libraries(${MODULE_NAME} ${TEST_LIB})
@@ -164,6 +176,8 @@ if (RDK_SERVICES_L1_TEST)
             ${TEST_INC}
             ${CMAKE_SOURCE_DIR}/Tests/mocks
             ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+            # googletest install prefix include dir (gtest/gmock headers)
+            ${CMAKE_INSTALL_PREFIX}/include
             )
 
     target_link_directories(${APPGATEWAY_L1_TEST_EXE} PRIVATE
