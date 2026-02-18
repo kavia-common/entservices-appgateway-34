@@ -229,6 +229,8 @@ if (RDK_SERVICES_L1_TEST)
     #
     # Secondary fallback:
     #   ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+    #
+    # Note: When CMAKE_INSTALL_PREFIX=/usr, both paths are the same.
     set(APPGATEWAY_PLUGIN_SO_SYSTEM "/usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so")
     set(APPGATEWAY_PLUGIN_SO_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so")
 
