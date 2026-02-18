@@ -782,42 +782,57 @@ cmake_configure_build_install \
   "${INSTALL_USR}" \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
-# Sanity check: ensure the plugin .so was installed to the expected location used by tests/coverage.
-if ls "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so >/dev/null 2>&1; then
-  log "[OK] Step 23 produced AppGateway plugin .so under ${INSTALL_USR}/lib/wpeframework/plugins"
-  ls -la "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so || true
-else
-  err "Step 23 did not install an AppGateway plugin .so under: ${INSTALL_USR}/lib/wpeframework/plugins"
+# Locate the installed plugin .so under ${INSTALL_USR}. We do NOT rely on a single
+# install destination because the plugin CMake can install either to:
+#   - ${INSTALL_USR}/lib/wpeframework/plugins
+#   - ${INSTALL_USR}/lib/<storage_directory>/plugins
+SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
+
+PLUGIN_CANDIDATES=(
+  "${INSTALL_USR}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so"
+  "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so
+  "${INSTALL_USR}/lib/"*/plugins/libWPEFrameworkAppGateway.so
+  "${INSTALL_USR}/lib/"*/plugins/*AppGateway*.so
+)
+
+APPGW_PLUGIN_SRC=""
+for candidate in "${PLUGIN_CANDIDATES[@]}"; do
+  # Expand globs safely; when no match, ls exits non-zero.
+  if ls ${candidate} >/dev/null 2>&1; then
+    APPGW_PLUGIN_SRC="$(ls -1 ${candidate} 2>/dev/null | head -n 1)"
+    break
+  fi
+done
+
+if [[ -z "${APPGW_PLUGIN_SRC}" || ! -f "${APPGW_PLUGIN_SRC}" ]]; then
+  err "Step 23 did not produce/locate an AppGateway plugin .so under: ${INSTALL_USR}"
+  err "Searched candidates:"
+  printf '  - %s\n' "${PLUGIN_CANDIDATES[@]}" >&2
   err "Expected because -DPLUGIN_APPGATEWAY=ON was set. Check build output under: ${APPGATEWAY_BUILD_DIR}"
   exit 1
 fi
 
-# Also install to the system plugin directory expected by some CI/coverage checks.
-SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
-APPGW_PLUGIN_SRC="${INSTALL_USR}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so"
+log "[OK] Located AppGateway plugin .so at: ${APPGW_PLUGIN_SRC}"
+ls -la "${APPGW_PLUGIN_SRC}" || true
 
-if [[ -f "${APPGW_PLUGIN_SRC}" ]]; then
-  log "[Step 23] Installing libWPEFrameworkAppGateway.so into ${SYSTEM_PLUGIN_DIR}"
-  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
-    mkdir -p "${SYSTEM_PLUGIN_DIR}"
-    cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
-  else
-    if have_cmd sudo; then
-      sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
-      sudo -n cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
-    else
-      err "Cannot install plugin into ${SYSTEM_PLUGIN_DIR}: need root or sudo."
-      err "Plugin is present at: ${APPGW_PLUGIN_SRC}"
-      exit 1
-    fi
-  fi
-  log "[OK] System plugin installed: ${SYSTEM_PLUGIN_DIR}/libWPEFrameworkAppGateway.so"
-  ls -la "${SYSTEM_PLUGIN_DIR}/libWPEFrameworkAppGateway.so" || true
+# Install/copy into the system plugin directory required by the task.
+log "[Step 23] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_DIR}"
+if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+  mkdir -p "${SYSTEM_PLUGIN_DIR}"
+  cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
 else
-  err "Expected plugin not found at: ${APPGW_PLUGIN_SRC}"
-  err "Cannot install into ${SYSTEM_PLUGIN_DIR}. Check Step 23 build output under: ${APPGATEWAY_BUILD_DIR}"
-  exit 1
+  if have_cmd sudo; then
+    sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
+    sudo -n cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
+  else
+    err "Cannot install plugin into ${SYSTEM_PLUGIN_DIR}: need root or sudo."
+    err "Plugin is present at: ${APPGW_PLUGIN_SRC}"
+    exit 1
+  fi
 fi
+
+log "[OK] System plugin directory now contains:"
+ls -la "${SYSTEM_PLUGIN_DIR}/"*.so 2>/dev/null | grep -i AppGateway || ls -la "${SYSTEM_PLUGIN_DIR}" || true
 
 # -----------------------------------------------------------------------------#
 # Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)

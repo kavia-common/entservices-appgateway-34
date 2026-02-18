@@ -82,13 +82,8 @@ target_link_libraries(${MODULE_NAME}
 # To error any missing links
 target_link_options(${MODULE_NAME} PRIVATE -Wl,-z,defs)
 
-# Install into the canonical Thunder plugin directory expected by CI/tests:
-#   ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
-# This avoids mismatches when the historical install path:
-#   lib/${STORAGE_DIRECTORY}/plugins
-# (derived from NAMESPACE) is not "lib/wpeframework/plugins" in the build environment.
 install(TARGETS ${MODULE_NAME}
-        DESTINATION lib/wpeframework/plugins)
+        DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/resolutions/resolution.base.json
         DESTINATION "/etc/app-gateway/")

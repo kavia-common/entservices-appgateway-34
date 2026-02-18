@@ -216,27 +216,34 @@ if (RDK_SERVICES_L1_TEST)
 
     find_package(GTest REQUIRED)
 
-    # Prefer linking by CMake target so CMake supplies the correct full path, rpath,
-    # and transitive dependencies. The plugin is defined in AppGateway/CMakeLists.txt as:
-    #   add_library(${NAMESPACE}AppGateway SHARED ...)
-    # which installs to: lib/${STORAGE_DIRECTORY}/plugins
+    # Link against the *installed* AppGateway plugin shared library rather than the
+    # in-tree plugin target or plugin sources.
     #
-    # If, for some reason, the target is not available (e.g., plugin not enabled),
-    # fall back to linking the installed shared library artifact.
-    if (TARGET ${NAMESPACE}AppGateway)
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-                ${NAMESPACE}AppGateway
-                )
+    # Rationale:
+    #   - Ensures tests validate the real plugin artifact and its exported symbols.
+    #   - Avoids symbol duplication (e.g., Thunder module metadata) that can occur when
+    #     plugin sources/targets are pulled into the test link.
+    #
+    # Primary expected install location per task requirement:
+    #   /usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+    #
+    # Secondary fallback:
+    #   ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+    set(APPGATEWAY_PLUGIN_SO_SYSTEM "/usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so")
+    set(APPGATEWAY_PLUGIN_SO_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so")
+
+    if (EXISTS "${APPGATEWAY_PLUGIN_SO_SYSTEM}")
+        message(STATUS "Linking AppGatewayL1Test against installed plugin: ${APPGATEWAY_PLUGIN_SO_SYSTEM}")
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO_SYSTEM}")
+    elseif (EXISTS "${APPGATEWAY_PLUGIN_SO_PREFIX}")
+        message(STATUS "Linking AppGatewayL1Test against installed plugin: ${APPGATEWAY_PLUGIN_SO_PREFIX}")
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO_PREFIX}")
     else()
-        message(WARNING
-                "Target ${NAMESPACE}AppGateway not found; falling back to linking by library name from the expected plugin install directory. "
-                "Ensure -DPLUGIN_APPGATEWAY=ON is set during configure and that the plugin was installed under "
-                "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins.")
-        # Do not hardcode a specific filename here (namespace/layout can differ); instead, link
-        # by logical name and rely on target_link_directories() above pointing at the plugin dir.
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-                ${NAMESPACE}AppGateway
-                )
+        message(FATAL_ERROR
+            "AppGateway plugin shared library not found. Expected one of:\n"
+            "  - ${APPGATEWAY_PLUGIN_SO_SYSTEM}\n"
+            "  - ${APPGATEWAY_PLUGIN_SO_PREFIX}\n"
+            "Ensure configure uses -DPLUGIN_APPGATEWAY=ON and the plugin has been installed.")
     endif()
 
     # Keep existing Thunder plugin host linkage.
