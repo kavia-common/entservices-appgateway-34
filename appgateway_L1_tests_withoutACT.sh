@@ -647,17 +647,18 @@ fi
 # -----------------------------------------------------------------------------
 # Step 23: Build entservices-appgateway (REQUIRED)
 # -----------------------------------------------------------------------------
-log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, ENABLE_UNIT_TESTS=ON)"
+log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, RDK_SERVICES_L1_TEST=ON)"
 #
-# Configure/build/install this repo with coverage flags and -DENABLE_UNIT_TESTS=ON.
-# Required per user_input_ref.
+# Configure/build/install this repo with coverage flags and -DRDK_SERVICES_L1_TEST=ON.
+# This ensures Tests/L1Tests is included by the top-level CMake and the AppGatewayL1Test
+# executable is built + installed to ${INSTALL_USR}/bin.
 #
 # Note: workflow builds the whole repo in one build dir (build/entservices-appgateway);
 # coverage collection later points at this directory. We mirror that under BUILD_ROOT.
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
 EXTRA_APPGW_CMAKE_ARGS=(
-  -DENABLE_UNIT_TESTS=ON
+  -DRDK_SERVICES_L1_TEST=ON
 )
 
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
@@ -745,7 +746,7 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
 
   if ! have_cmd AppGatewayL1Test; then
     err "AppGatewayL1Test not found on PATH. Expected it in: ${INSTALL_USR}/bin"
-    err "Ensure Step 23 built/installed this repo with ENABLE_UNIT_TESTS=ON (and that Tests/L1Tests builds the executable)."
+    err "Ensure Step 23 built/installed this repo with -DRDK_SERVICES_L1_TEST=ON (so Tests/L1Tests builds + installs the executable)."
     exit 1
   fi
 
