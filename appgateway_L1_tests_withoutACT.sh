@@ -758,6 +758,23 @@ if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
 
+# Log the FULL configure command line that will be used (including PLUGIN_APPGATEWAY),
+# since the build log is used for debugging missing installed plugin .so issues.
+(
+  # Print a command that mirrors cmake_configure_build_install() as closely as possible.
+  # Note: Generator selection (-G Ninja) is handled inside cmake_configure_build_install(),
+  # so we log the core configure args that matter for correctness.
+  printf '==> %s: Full CMake configure command: ' "entservices-appgateway"
+  printf 'cmake -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
+    "${REPO_DIR}" \
+    "${APPGATEWAY_BUILD_DIR}" \
+    "${INSTALL_USR}"
+  for a in "${EXTRA_APPGW_CMAKE_ARGS[@]}"; do
+    printf ' %q' "${a}"
+  done
+  printf '\n'
+)
+
 cmake_configure_build_install \
   "entservices-appgateway" \
   "${REPO_DIR}" \
