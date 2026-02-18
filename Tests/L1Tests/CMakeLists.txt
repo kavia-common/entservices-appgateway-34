@@ -127,7 +127,19 @@ target_include_directories(${MODULE_NAME}
 target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
 
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
-write_config(${PLUGIN_NAME})
+
+# ConfigGenerator requires a matching template file (<plugin>.conf.in). In this repo,
+# Tests/L1Tests/L1TestsIN.conf.in is missing, which breaks configure when
+# RDK_SERVICES_L1_TEST=ON (coverage workflow). Since coverage only needs the
+# AppGatewayL1Test runner binary, make config generation best-effort.
+if (EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/${PLUGIN_NAME}.conf.in")
+    write_config(${PLUGIN_NAME})
+else()
+    message(WARNING
+        "Skipping write_config(${PLUGIN_NAME}): missing template "
+        "'${CMAKE_CURRENT_SOURCE_DIR}/${PLUGIN_NAME}.conf.in'. "
+        "This does not affect building/running AppGatewayL1Test for coverage.")
+endif()
 
 # -----------------------------------------------------------------------------
 # New behavior (guarded): also build a runnable AppGateway-only L1 test executable.
