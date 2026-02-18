@@ -177,7 +177,12 @@ endif()
 if (RDK_SERVICES_L1_TEST)
     set(APPGATEWAY_L1_TEST_EXE AppGatewayL1Test)
 
-    add_executable(${APPGATEWAY_L1_TEST_EXE} ${TEST_SRC})
+    add_executable(${APPGATEWAY_L1_TEST_EXE}
+            ${TEST_SRC}
+            # AppGateway already provides a Module.cpp that emits the Thunder module-name symbol(s)
+            # via MODULE_NAME_DECLARATION(BUILD_REFERENCE). Compile it into the test executable.
+            ${CMAKE_SOURCE_DIR}/AppGateway/Module.cpp
+            )
 
     # -------------------------------------------------------------------------
     # Fix linker errors:
