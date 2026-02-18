@@ -134,6 +134,8 @@ target_include_directories(${MODULE_NAME}
         $<INSTALL_INTERFACE:include>
         ${CMAKE_SOURCE_DIR}/Tests/mocks
         ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+        # Allow tests to include AppGateway headers like "AppGatewayImplementation.h" and "Resolver.h"
+        ${CMAKE_SOURCE_DIR}/AppGateway
         )
 
 target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
@@ -176,6 +178,8 @@ if (RDK_SERVICES_L1_TEST)
             ${TEST_INC}
             ${CMAKE_SOURCE_DIR}/Tests/mocks
             ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+            # Allow tests to include AppGateway headers like "AppGatewayImplementation.h" and "Resolver.h"
+            ${CMAKE_SOURCE_DIR}/AppGateway
             # googletest install prefix include dir (gtest/gmock headers)
             ${CMAKE_INSTALL_PREFIX}/include
             )
