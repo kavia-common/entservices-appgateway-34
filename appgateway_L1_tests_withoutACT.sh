@@ -8,29 +8,12 @@ set -euo pipefail
 #   Run the AppGateway L1 workflow steps while keeping repeated executions fast by
 #   reusing already-cloned repos and already-built/install artifacts when present.
 #
-# New behavior (this change):
-#   - Detect existing clone/build/install outputs for:
-#       Thunder, ThunderTools, googletest, entservices-apis, entservices-appgateway
-#     and skip clone/configure/build/install steps when they are already present.
-#   - Still allow a clean rebuild when requested (see flags below).
-#
-# Usage:
-#   ./appgateway_L1_tests_withoutACT.sh
-#
-#   Clean rebuild of EVERYTHING (removes build dirs + install prefix):
-#     ./appgateway_L1_tests_withoutACT.sh --clean
-#
-#   Force rebuild (reconfigure+build+install) but keep installs/build dirs:
-#     ./appgateway_L1_tests_withoutACT.sh --rebuild
-#
-#   Force reclone (deletes and re-clones the git repos):
-#     ./appgateway_L1_tests_withoutACT.sh --reclone
-#
-# Notes:
-#   - We do NOT use build_dependencies.sh (all commands live here).
-#   - We do NOT implement the "generate external headers" step at this time.
-#   - Coverage toolchain file from entservices-testframework appends '--coverage'
-#     to CMAKE_CXX_FLAGS; we apply it to builds that should produce coverage data.
+# Required behavior for this task:
+#   - Step 23 MUST pass -DPLUGIN_APPGATEWAY=ON so AppGateway plugin .so is built.
+#   - Step 23 MUST log the FULL CMake configure command (including generator).
+#   - The AppGateway plugin shared object MUST be installed/copied to:
+#       /usr/lib/wpeframework/plugins
+#   - Tests must link against the installed plugin (handled in Tests/L1Tests CMake).
 # -----------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,7 +67,7 @@ git_noninteractive_env() {
 }
 
 # -----------------------------------------------------------------------------
-# Rebuild / reclone controls (new)
+# Rebuild / reclone controls
 # -----------------------------------------------------------------------------
 CLEAN=0
 FORCE_REBUILD=0
@@ -133,12 +116,10 @@ while [[ $# -gt 0 ]]; do
   esac
 done
 
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 # Git helpers
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 ensure_git_checkout_ref() {
-  # Ensure that a git repo at dir is checked out to the requested ref (tag/branch).
-  # Best-effort and non-interactive.
   local dir="$1"
   local ref="$2"
 
@@ -156,7 +137,6 @@ ensure_git_checkout_ref() {
   (
     cd "${dir}"
 
-    # Fetch tags/updates best-effort; do not fail the whole function.
     git fetch --tags --prune --quiet 2>/dev/null || true
 
     if git rev-parse -q --verify "refs/tags/${ref}" >/dev/null 2>&1; then
@@ -180,8 +160,6 @@ ensure_git_checkout_ref() {
 }
 
 ensure_repo_clone_and_checkout() {
-  # Ensure a repo exists at dir; if missing clone from url; checkout ref best-effort.
-  # If FORCE_RECLONE=1, delete and re-clone.
   local dir="$1"
   local url="$2"
   local ref="$3"
@@ -223,7 +201,6 @@ ensure_repo_clone_and_checkout() {
 }
 
 apply_patch_dir() {
-  # Apply a patch to a repo directory in an idempotent, non-interactive way.
   local repo_dir="$1"
   local patch_file="$2"
   local p_level="$3"
@@ -245,7 +222,6 @@ apply_patch_dir() {
   (
     cd "${repo_dir}"
 
-    # Capture output so we can detect "already applied" cases even if patch exits non-zero.
     set +e
     local out rc
     out="$(patch "${p_level}" --batch --forward < "${patch_file}" 2>&1)"
@@ -257,21 +233,19 @@ apply_patch_dir() {
       return 0
     fi
 
-    # Idempotency handling: consider these known messages as success.
     if echo "${out}" | grep -Eqi "(previously applied|Reversed.*previously applied|Skipping patch|already exists)"; then
       warn "Patch appears already applied (or files already present); continuing."
       echo "${out}"
       return 0
     fi
 
-    # Unknown failure: propagate error to caller
     echo "${out}" >&2
     return "${rc}"
   )
 }
 
 # -----------------------------------------------------------------------------
-# Build helpers (updated: can skip if build/install artifacts exist)
+# Build helpers
 # -----------------------------------------------------------------------------
 build_dir_configured() {
   local build_dir="$1"
@@ -280,9 +254,7 @@ build_dir_configured() {
 
 # PUBLIC_INTERFACE
 is_component_installed() {
-  # Return 0 if an install prefix appears to contain the given component outputs.
-  #
-  # This is a heuristic detection used to skip expensive rebuilds in repeated runs.
+  # Heuristic to skip rebuilds.
   local component="$1"
   local prefix_usr="$2"
 
@@ -297,7 +269,6 @@ is_component_installed() {
       [[ -f "${prefix_usr}/lib/libgtest.a" || -f "${prefix_usr}/lib/libgtest.so" || -f "${prefix_usr}/lib64/libgtest.a" || -f "${prefix_usr}/lib64/libgtest.so" || -d "${prefix_usr}/include/gtest" ]]
       ;;
     entservices-apis)
-      # This repo installs headers and potentially libs; we key off "apis/" install being present.
       [[ -d "${prefix_usr}/include" && ( -d "${prefix_usr}/include/interfaces" || -d "${prefix_usr}/include/WPEFramework" ) ]]
       ;;
     entservices-appgateway)
@@ -310,9 +281,6 @@ is_component_installed() {
 }
 
 cmake_configure_build_install() {
-  # Configure/build/install a cmake project using Ninja if available.
-  # If FORCE_REBUILD=0 and build dir looks configured and install outputs exist,
-  # skip this step.
   local component_name="$1"
   local src_dir="$2"
   local build_dir="$3"
@@ -350,52 +318,40 @@ cmake_configure_build_install() {
   cmake --install "${build_dir}"
 }
 
-# -----------------------------------------------------------------------------#
-# Workspace layout (per requirement: ALL clones under this repo directory)
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
+# Workspace layout
+# -----------------------------------------------------------------------------
 WORKSPACE_ROOT_DEFAULT="/home/kavia/workspace/code-generation"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-${WORKSPACE_ROOT_DEFAULT}}"
 
-# Versions per prior workflow guidance
 THUNDER_REF_REQUIRED="R4.4.1"
 THUNDERTOOLS_REF_REQUIRED="R4.4.3"
 
-# All cloned repos under entservices-appgateway-34/
 THUNDER_DIR="${REPO_DIR}/Thunder"
 THUNDERTOOLS_DIR="${REPO_DIR}/ThunderTools"
 APIS_DIR="${REPO_DIR}/entservices-apis"
 GTEST_DIR="${REPO_DIR}/googletest"
 
-# Patches are sourced from this repo (no dependency on entservices-testframework).
 PATCHES_DIR="${REPO_DIR}/Tests/patches"
 
-# Install prefix (matches "install/usr" pattern)
 INSTALL_ROOT="${INSTALL_ROOT:-${WORKSPACE_ROOT}/install}"
 INSTALL_USR="${INSTALL_ROOT}/usr"
 
-# Central build output dir
-# IMPORTANT:
-#   This defaults to /tmp to avoid permission issues.
 BUILD_ROOT="${BUILD_ROOT:-/tmp/entservices-appgateway-build}"
 
-# If --clean requested: remove build dirs + install
 if [[ "${CLEAN}" -eq 1 ]]; then
   log "[CLEAN] Removing build outputs under BUILD_ROOT=${BUILD_ROOT} and install under INSTALL_ROOT=${INSTALL_ROOT}"
   rm -rf "${BUILD_ROOT}" || true
   rm -rf "${INSTALL_ROOT}" || true
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 1: Set up cache (SKIP)
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
+# Steps 1-22 are retained as-is (package installs/patching/build dependencies)
+# -----------------------------------------------------------------------------
 log "[Step 1] Set up cache (SKIP)"
 log "Reason: GitHub Actions cache only."
 
-# -----------------------------------------------------------------------------#
-# Step 2: Set up Python + pip install jsonref
-# -----------------------------------------------------------------------------#
 log "[Step 2] Set up Python + pip install jsonref"
-
 if ! have_cmd python3; then
   err "python3 is not available on PATH"
   exit 1
@@ -411,15 +367,9 @@ python3 -m pip install --user -q jsonref
 python3 -c "import jsonref; print('jsonref', getattr(jsonref, '__version__', 'unknown'))"
 log "[OK] Python/pip/jsonref are ready"
 
-# -----------------------------------------------------------------------------#
-# Step 3: ACK External Trigger (OPTIONAL echo/log)
-# -----------------------------------------------------------------------------#
 log "[Step 3] ACK External Trigger (OPTIONAL)"
 log "ACK external trigger: N/A in container run. (Non-blocking step.)"
 
-# -----------------------------------------------------------------------------#
-# Step 4: Set up CMake (Skip if already installed)
-# -----------------------------------------------------------------------------#
 log "[Step 4] Set up CMake (Skip if already installed)"
 if have_cmd cmake; then
   echo "CMake: $(cmake --version | head -n 1)"
@@ -449,11 +399,7 @@ else
   fi
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 5: Install packages
-# -----------------------------------------------------------------------------#
 log "[Step 5] Install packages"
-
 APT_PACKAGES=(
   libsqlite3-dev
   libcurl4-openssl-dev
@@ -487,11 +433,7 @@ else
   printf '  - %s\n' "${APT_PACKAGES[@]}" >&2
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 6: Build trower-base64
-# -----------------------------------------------------------------------------#
 log "[Step 6] Build trower-base64"
-
 (
   set +e
 
@@ -546,41 +488,23 @@ log "[Step 6] Build trower-base64"
   exit 0
 ) || true
 
-# -----------------------------------------------------------------------------#
-# Step 7: Checkout Thunder (R4.4.1) - CLONE INTO REPO DIR IF MISSING
-# -----------------------------------------------------------------------------#
 log "[Step 7] Checkout Thunder (Ensure ${THUNDER_DIR} exists at ${THUNDER_REF_REQUIRED})"
 ensure_repo_clone_and_checkout "${THUNDER_DIR}" "https://github.com/rdkcentral/Thunder.git" "${THUNDER_REF_REQUIRED}" || true
 
-# -----------------------------------------------------------------------------#
-# Step 8: Checkout ThunderTools (R4.4.3) - CLONE INTO REPO DIR IF MISSING
-# -----------------------------------------------------------------------------#
 log "[Step 8] Checkout ThunderTools (Ensure ${THUNDERTOOLS_DIR} exists at ${THUNDERTOOLS_REF_REQUIRED})"
 ensure_repo_clone_and_checkout "${THUNDERTOOLS_DIR}" "https://github.com/rdkcentral/ThunderTools.git" "${THUNDERTOOLS_REF_REQUIRED}" || true
 
-# -----------------------------------------------------------------------------#
-# Step 9: Checkout entservices-testframework (develop) - SKIPPED
-# -----------------------------------------------------------------------------#
 log "[Step 9] Checkout entservices-testframework (SKIPPED)"
 log "Reason: Do not rely on entservices-testframework for patches; patches are sourced from ${PATCHES_DIR}."
 log "However, we DO use entservices-testframework as a reference for the coverage toolchain file in Step 20."
 
-# -----------------------------------------------------------------------------#
-# Step 10: Checkout entservices-appgateway (this repo)
-# -----------------------------------------------------------------------------#
 log "[Step 10] Checkout entservices-appgateway (Use local repo checkout)"
 echo "This repo: ${REPO_DIR}"
 echo "Workspace root: ${WORKSPACE_ROOT}"
 
-# -----------------------------------------------------------------------------#
-# Step 11: Checkout googletest (v1.15.0) - CLONE INTO REPO DIR
-# -----------------------------------------------------------------------------#
 log "[Step 11] Checkout googletest (Ensure exists at v1.15.0)"
 ensure_repo_clone_and_checkout "${GTEST_DIR}" "https://github.com/google/googletest.git" "v1.15.0" || true
 
-# -----------------------------------------------------------------------------#
-# Step 12: Apply patches ThunderTools
-# -----------------------------------------------------------------------------#
 log "[Step 12] Apply patches ThunderTools"
 if [[ -d "${PATCHES_DIR}" ]]; then
   run_best_effort "ThunderTools patch" apply_patch_dir \
@@ -591,9 +515,6 @@ else
   warn "Patches dir not found at ${PATCHES_DIR}; cannot apply ThunderTools patch."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 13: Build ThunderTools (install into install/usr)
-# -----------------------------------------------------------------------------#
 log "[Step 13] Build ThunderTools"
 if [[ -d "${THUNDERTOOLS_DIR}" ]]; then
   mkdir -p "${BUILD_ROOT}"
@@ -607,11 +528,7 @@ else
   warn "ThunderTools dir not found at ${THUNDERTOOLS_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 14: Apply patches Thunder
-# -----------------------------------------------------------------------------#
 log "[Step 14] Apply patches Thunder"
-
 if [[ -d "${PATCHES_DIR}" ]]; then
   THUNDER_PATCHES=(
     "Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch"
@@ -632,9 +549,6 @@ else
   warn "Patches dir not found at ${PATCHES_DIR}; cannot apply Thunder patches."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 15: Build Thunder (install into install/usr)
-# -----------------------------------------------------------------------------#
 log "[Step 15] Build Thunder"
 if [[ -d "${THUNDER_DIR}" ]]; then
   cmake_configure_build_install \
@@ -647,21 +561,14 @@ else
   warn "Thunder dir not found at ${THUNDER_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 16: Checkout entservices-apis (develop) - CLONE INTO REPO DIR
-# -----------------------------------------------------------------------------#
 log "[Step 16] Checkout entservices-apis (Ensure exists)"
 ensure_repo_clone_and_checkout "${APIS_DIR}" "https://github.com/rdkcentral/entservices-apis.git" "develop" || true
 
-# Workflow note: remove jsonrpc/DTV.json (best-effort).
 if [[ -f "${APIS_DIR}/jsonrpc/DTV.json" ]]; then
   log "Removing ${APIS_DIR}/jsonrpc/DTV.json (workflow parity)"
   rm -f "${APIS_DIR}/jsonrpc/DTV.json" || true
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 17: Apply patches entservices-apis
-# -----------------------------------------------------------------------------#
 log "[Step 17] Apply patch RDKEMW-1007.patch to entservices-apis"
 if [[ -f "${PATCHES_DIR}/RDKEMW-1007.patch" ]]; then
   run_best_effort "entservices-apis patch RDKEMW-1007.patch" apply_patch_dir \
@@ -672,9 +579,6 @@ else
   warn "Missing patch ${PATCHES_DIR}/RDKEMW-1007.patch; cannot apply entservices-apis patch."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 18: Build entservices-apis (install into install/usr)
-# -----------------------------------------------------------------------------#
 log "[Step 18] Build entservices-apis (configure/build/install into install/usr)"
 if [[ -d "${APIS_DIR}" ]]; then
   cmake_configure_build_install \
@@ -686,15 +590,9 @@ else
   warn "entservices-apis dir not found at ${APIS_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 19: Generate external headers (SKIPPED/COMMENTED for now)
-# -----------------------------------------------------------------------------#
 log "[Step 19] Generate external headers (SKIPPED)"
-log "Per request: do later. (Workflow would create minimal headers under entservices-testframework/Tests/headers.)"
+log "Per request: do later."
 
-# -----------------------------------------------------------------------------#
-# Step 20: Set gcc/with-coverage toolchain
-# -----------------------------------------------------------------------------#
 log "[Step 20] Set gcc/with-coverage toolchain (wire CMake toolchain file)"
 COVERAGE_TOOLCHAIN_FILE_DEFAULT="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/gcc-with-coverage.cmake"
 COVERAGE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE:-${COVERAGE_TOOLCHAIN_FILE_DEFAULT}}"
@@ -706,9 +604,6 @@ else
   warn "Step 20 will be effectively skipped; coverage flags will not be injected by toolchain."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 21: Build googletest (install into install/usr)
-# -----------------------------------------------------------------------------#
 log "[Step 21] Build googletest (configure/build/install into install/usr)"
 if [[ -d "${GTEST_DIR}" ]]; then
   EXTRA_GTEST_CMAKE_ARGS=(
@@ -732,31 +627,21 @@ else
   warn "Googletest dir not found at ${GTEST_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 22: Build mocks (NOT REQUIRED FOR NOW - COMMENTED)
-# -----------------------------------------------------------------------------#
 log "[Step 22] Build mocks (NOT REQUIRED FOR NOW - SKIPPED)"
 log "Per request: step 22 is not required for now."
 
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 # Step 23: Build entservices-appgateway (REQUIRED)
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, RDK_SERVICES_L1_TEST=ON)"
 
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
-
-# IMPORTANT (per attached failing log):
-#   DO NOT configure from WORKSPACE_ROOT (e.g. /home/kavia/workspace/code-generation)
-#   because it does not contain this repo's CMakeLists.txt.
-#   The CMake -S *must* be the entservices-appgateway-34 repository root.
 APPGATEWAY_SRC_DIR="${REPO_DIR}"
 
 EXTRA_APPGW_CMAKE_ARGS=(
   -DRDK_SERVICES_L1_TEST=ON
 
-  # Explicitly enable the AppGateway plugin so the script-driven build/install
-  # produces the plugin .so consumed by tests/coverage.
-  # (The top-level CMakeLists.txt only adds AppGateway/ when PLUGIN_APPGATEWAY is ON.)
+  # Required: ensure plugin is built (top-level only adds subdir if this is ON)
   -DPLUGIN_APPGATEWAY=ON
 )
 
@@ -764,8 +649,7 @@ if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
 
-# Log the FULL configure command line that will be used, and ensure it EXACTLY
-# matches the actual invocation (including generator selection).
+# Log full configure command used.
 APPGW_CMAKE_GENERATOR_ARGS=()
 if have_cmd ninja; then
   APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
@@ -787,8 +671,6 @@ fi
   printf '\n'
 )
 
-# Use the same helper for build/install, but ensure the logged configure command
-# above matches what the helper will execute.
 cmake_configure_build_install \
   "entservices-appgateway" \
   "${APPGATEWAY_SRC_DIR}" \
@@ -796,22 +678,17 @@ cmake_configure_build_install \
   "${INSTALL_USR}" \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
-# Locate the installed plugin .so under ${INSTALL_USR}. We do NOT rely on a single
-# install destination because the plugin CMake can install either to:
-#   - ${INSTALL_USR}/lib/wpeframework/plugins
-#   - ${INSTALL_USR}/lib/<storage_directory>/plugins
+# Ensure plugin is present in install prefix, then copy to /usr/lib/wpeframework/plugins
 SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
 
 PLUGIN_CANDIDATES=(
-  "${INSTALL_USR}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so"
+  "${INSTALL_USR}/usr/lib/wpeframework/plugins/"*AppGateway*.so
   "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so
-  "${INSTALL_USR}/lib/"*/plugins/libWPEFrameworkAppGateway.so
   "${INSTALL_USR}/lib/"*/plugins/*AppGateway*.so
 )
 
 APPGW_PLUGIN_SRC=""
 for candidate in "${PLUGIN_CANDIDATES[@]}"; do
-  # Expand globs safely; when no match, ls exits non-zero.
   if ls ${candidate} >/dev/null 2>&1; then
     APPGW_PLUGIN_SRC="$(ls -1 ${candidate} 2>/dev/null | head -n 1)"
     break
@@ -829,15 +706,10 @@ fi
 log "[OK] Located AppGateway plugin .so at: ${APPGW_PLUGIN_SRC}"
 ls -la "${APPGW_PLUGIN_SRC}" || true
 
-# Install/copy into the system plugin directory required by AppGatewayL1Test:
-#   Tests/L1Tests/CMakeLists.txt prefers:
-#     /usr/lib/wpeframework/plugins/<AppGateway plugin .so>
-#
-# Do not hardcode the basename; copy with the same filename that the build/install produced.
 SYSTEM_PLUGIN_SO_PATH="${SYSTEM_PLUGIN_DIR}/$(basename "${APPGW_PLUGIN_SRC}")"
 
 log "[Step 23] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_SO_PATH}"
-if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+if is_root; then
   mkdir -p "${SYSTEM_PLUGIN_DIR}"
   cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_SO_PATH}"
 else
@@ -855,23 +727,17 @@ fi
 log "[OK] System plugin dir now contains:"
 ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || ls -la "${SYSTEM_PLUGIN_DIR}" || true
 
-# -----------------------------------------------------------------------------#
-# Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)
-# -----------------------------------------------------------------------------#
 log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
 log "Per request: step 24 is not required for now."
 
 log "[DONE] Steps 1–24 completed (as applicable in this container; steps 22 and 24 skipped per request)."
 
-# -----------------------------------------------------------------------------#
-# Step 25: Set up files (COMMENTED for now)
-# -----------------------------------------------------------------------------#
 log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/device nodes)"
 log "Per request: commented/skipped for now."
 
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 # Step 26: Run unit tests without valgrind (REQUIRED)
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for coverage)"
 
 (
@@ -906,14 +772,11 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
 )
 log "[OK] Step 26 complete: ${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
 
-# -----------------------------------------------------------------------------#
-# Step 27: Run unit tests with valgrind (NOT REQUIRED for now)
-# -----------------------------------------------------------------------------#
 log "[Step 27] Run unit tests with valgrind (NOT REQUIRED - skipped; focusing on coverage report)"
 
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 # Step 28: Generate coverage (REQUIRED)
-# -----------------------------------------------------------------------------#
+# -----------------------------------------------------------------------------
 log "[Step 28] Generate coverage (REQUIRED)"
 
 LCOVRC_SRC_1="${REPO_DIR}/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
@@ -971,9 +834,6 @@ else
   warn "If this is unexpected, check whether the plugin target is enabled in the top-level build/install."
 fi
 
-# -----------------------------------------------------------------------------#
-# Step 29: Upload artifacts (COMMENTED for now)
-# -----------------------------------------------------------------------------#
 log "[Step 29] Upload artifacts (COMMENTED - not applicable locally)"
 
 echo "Summary:"
