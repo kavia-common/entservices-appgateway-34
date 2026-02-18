@@ -792,6 +792,33 @@ else
   exit 1
 fi
 
+# Also install to the system plugin directory expected by some CI/coverage checks.
+SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
+APPGW_PLUGIN_SRC="${INSTALL_USR}/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so"
+
+if [[ -f "${APPGW_PLUGIN_SRC}" ]]; then
+  log "[Step 23] Installing libWPEFrameworkAppGateway.so into ${SYSTEM_PLUGIN_DIR}"
+  if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
+    mkdir -p "${SYSTEM_PLUGIN_DIR}"
+    cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
+  else
+    if have_cmd sudo; then
+      sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
+      sudo -n cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
+    else
+      err "Cannot install plugin into ${SYSTEM_PLUGIN_DIR}: need root or sudo."
+      err "Plugin is present at: ${APPGW_PLUGIN_SRC}"
+      exit 1
+    fi
+  fi
+  log "[OK] System plugin installed: ${SYSTEM_PLUGIN_DIR}/libWPEFrameworkAppGateway.so"
+  ls -la "${SYSTEM_PLUGIN_DIR}/libWPEFrameworkAppGateway.so" || true
+else
+  err "Expected plugin not found at: ${APPGW_PLUGIN_SRC}"
+  err "Cannot install into ${SYSTEM_PLUGIN_DIR}. Check Step 23 build output under: ${APPGATEWAY_BUILD_DIR}"
+  exit 1
+fi
+
 # -----------------------------------------------------------------------------#
 # Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)
 # -----------------------------------------------------------------------------#
@@ -813,7 +840,7 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
 
 (
   export PATH="${INSTALL_USR}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
   export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
   TEST_BIN=""
