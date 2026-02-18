@@ -745,6 +745,12 @@ log "[Step 23] Build entservices-appgateway (configure/build/install with covera
 
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
+# IMPORTANT:
+#   Step 23 must configure from the entservices-appgateway-34 repo root, NOT the
+#   workspace root. The authoritative failing log shows cmake was run with a
+#   workspace-root -S path that has no CMakeLists.txt.
+APPGATEWAY_SRC_DIR="${REPO_DIR}"
+
 EXTRA_APPGW_CMAKE_ARGS=(
   -DRDK_SERVICES_L1_TEST=ON
 
@@ -766,7 +772,7 @@ fi
   # so we log the core configure args that matter for correctness.
   printf '==> %s: Full CMake configure command: ' "entservices-appgateway"
   printf 'cmake -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
-    "${REPO_DIR}" \
+    "${APPGATEWAY_SRC_DIR}" \
     "${APPGATEWAY_BUILD_DIR}" \
     "${INSTALL_USR}"
   for a in "${EXTRA_APPGW_CMAKE_ARGS[@]}"; do
@@ -777,7 +783,7 @@ fi
 
 cmake_configure_build_install \
   "entservices-appgateway" \
-  "${REPO_DIR}" \
+  "${APPGATEWAY_SRC_DIR}" \
   "${APPGATEWAY_BUILD_DIR}" \
   "${INSTALL_USR}" \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
@@ -815,24 +821,32 @@ fi
 log "[OK] Located AppGateway plugin .so at: ${APPGW_PLUGIN_SRC}"
 ls -la "${APPGW_PLUGIN_SRC}" || true
 
-# Install/copy into the system plugin directory required by the task.
-log "[Step 23] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_DIR}"
+# Install/copy into the system plugin directory required by AppGatewayL1Test:
+#   Tests/L1Tests/CMakeLists.txt prefers:
+#     /usr/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+#
+# Ensure the final path AND filename match that expectation.
+EXPECTED_SO_BASENAME="libWPEFrameworkAppGateway.so"
+SYSTEM_PLUGIN_SO_PATH="${SYSTEM_PLUGIN_DIR}/${EXPECTED_SO_BASENAME}"
+
+log "[Step 23] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_SO_PATH}"
 if [[ "${EUID:-$(id -u)}" -eq 0 ]]; then
   mkdir -p "${SYSTEM_PLUGIN_DIR}"
-  cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
+  cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_SO_PATH}"
 else
   if have_cmd sudo; then
     sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
-    sudo -n cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_DIR}/"
+    sudo -n cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_SO_PATH}"
   else
     err "Cannot install plugin into ${SYSTEM_PLUGIN_DIR}: need root or sudo."
     err "Plugin is present at: ${APPGW_PLUGIN_SRC}"
+    err "Expected final install path for tests: ${SYSTEM_PLUGIN_SO_PATH}"
     exit 1
   fi
 fi
 
-log "[OK] System plugin directory now contains:"
-ls -la "${SYSTEM_PLUGIN_DIR}/"*.so 2>/dev/null | grep -i AppGateway || ls -la "${SYSTEM_PLUGIN_DIR}" || true
+log "[OK] System plugin path now contains:"
+ls -la "${SYSTEM_PLUGIN_SO_PATH}" || true
 
 # -----------------------------------------------------------------------------#
 # Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)
