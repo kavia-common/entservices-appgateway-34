@@ -747,6 +747,11 @@ APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
 EXTRA_APPGW_CMAKE_ARGS=(
   -DRDK_SERVICES_L1_TEST=ON
+
+  # Explicitly enable the AppGateway plugin so the script-driven build/install
+  # produces the plugin .so consumed by tests/coverage.
+  # (The top-level CMakeLists.txt only adds AppGateway/ when PLUGIN_APPGATEWAY is ON.)
+  -DPLUGIN_APPGATEWAY=ON
 )
 
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
@@ -759,6 +764,16 @@ cmake_configure_build_install \
   "${APPGATEWAY_BUILD_DIR}" \
   "${INSTALL_USR}" \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
+
+# Sanity check: ensure the plugin .so was installed to the expected location used by tests/coverage.
+if ls "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so >/dev/null 2>&1; then
+  log "[OK] Step 23 produced AppGateway plugin .so under ${INSTALL_USR}/lib/wpeframework/plugins"
+  ls -la "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so || true
+else
+  err "Step 23 did not install an AppGateway plugin .so under: ${INSTALL_USR}/lib/wpeframework/plugins"
+  err "Expected because -DPLUGIN_APPGATEWAY=ON was set. Check build output under: ${APPGATEWAY_BUILD_DIR}"
+  exit 1
+fi
 
 # -----------------------------------------------------------------------------#
 # Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)
