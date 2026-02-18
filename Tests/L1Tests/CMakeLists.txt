@@ -167,63 +167,27 @@ else()
 endif()
 
 # -----------------------------------------------------------------------------
-# New behavior (guarded): also build a runnable AppGateway-only L1 test executable.
+# Build a runnable AppGateway-only L1 test executable.
 #
 # IMPORTANT:
 #   Only build/install this binary when RDK_SERVICES_L1_TEST=ON, because the
-#   coverage workflow enables that option and expects the binary to exist in
+#   script-driven workflow enables that option and expects the binary to exist in
 #   ${CMAKE_INSTALL_PREFIX}/bin (install/usr/bin).
+#
+# Key change:
+#   Do NOT compile any AppGateway implementation sources (incl. Module.cpp) into
+#   this test binary. Instead, link against the AppGateway plugin shared library
+#   produced/installed by the build/install script to avoid duplicate Thunder
+#   module metadata/symbols.
 # -----------------------------------------------------------------------------
 if (RDK_SERVICES_L1_TEST)
     set(APPGATEWAY_L1_TEST_EXE AppGatewayL1Test)
 
     add_executable(${APPGATEWAY_L1_TEST_EXE}
             ${TEST_SRC}
-            # AppGateway already provides a Module.cpp that emits the Thunder module-name symbol(s)
-            # via MODULE_NAME_DECLARATION(BUILD_REFERENCE). Compile it into the test executable.
-            ${CMAKE_SOURCE_DIR}/AppGateway/Module.cpp
             )
 
-    # -------------------------------------------------------------------------
-    # Fix linker errors:
-    #   undefined reference to WPEFramework::Plugin::AppGatewayImplementation::Resolve/Configure/typeinfo
-    #
-    # Root cause:
-    #   The L1 test includes AppGatewayImplementation headers and instantiates
-    #   Core::Sink<AppGatewayImplementation>, but the AppGatewayImplementation.cpp
-    #   translation unit is not linked into the executable (and the AppGateway
-    #   plugin .so is not reliably built/available in coverage-only builds).
-    #
-    # Solution:
-    #   Build a small object library from the required in-tree sources and link
-    #   the resulting objects directly into AppGatewayL1Test.
-    # -------------------------------------------------------------------------
-    add_library(AppGatewayL1Test_AppGatewayObjects OBJECT
-            ${CMAKE_SOURCE_DIR}/AppGateway/AppGatewayImplementation.cpp
-            ${CMAKE_SOURCE_DIR}/AppGateway/Resolver.cpp
-            )
-
-    # The implementation sources rely on the same Thunder R4 selection as the tests/mocks.
-    target_compile_definitions(AppGatewayL1Test_AppGatewayObjects PRIVATE UNIT_TEST USE_THUNDER_R4)
-
-    target_include_directories(AppGatewayL1Test_AppGatewayObjects
-            PRIVATE
-            ${CMAKE_SOURCE_DIR}/AppGateway
-            ${CMAKE_SOURCE_DIR}/helpers
-            ${CMAKE_SOURCE_DIR}/Tests/mocks
-
-            # Thunder headers are included as <plugins/...>, so the include path must
-            # point at Thunder/Source (which contains the "plugins/" folder).
-            # NOTE: Thunder is vendored under ${CMAKE_SOURCE_DIR}/Thunder in this repo.
-            ${CMAKE_SOURCE_DIR}/Thunder/Source
-            ${CMAKE_SOURCE_DIR}/Thunder/Source/plugins
-
-            # Prefer installed headers when available (these contain WPEFramework/plugins/*)
-            ${CMAKE_INSTALL_PREFIX}/include/WPEFramework
-            ${CMAKE_INSTALL_PREFIX}/include
-            )
-
-    # Mirror compile definitions/includes/linking from the shared library target.
+    # Tests/mocks expect Thunder R4 interfaces.
     target_compile_definitions(${APPGATEWAY_L1_TEST_EXE} PRIVATE UNIT_TEST USE_THUNDER_R4)
 
     target_link_options(${APPGATEWAY_L1_TEST_EXE} PRIVATE "-Wl,-wrap,opendir")
@@ -252,27 +216,18 @@ if (RDK_SERVICES_L1_TEST)
 
     find_package(GTest REQUIRED)
 
-    # NOTE:
-    # The `Plugins` symbol is the module-name symbol emitted by Thunder's plugins Module.cpp via:
-    #   MODULE_NAME_DECLARATION(BUILD_REFERENCE)
-    # It is required by Core::ServiceMetadata<...>::Module() (Services.h) when plugin code is linked
-    # directly into this executable (as object files). Some linkers with --as-needed may drop the
-    # Plugins library if it appears before the objects, so we link ${TEST_LIB} again at the end
-    # to ensure the symbol provider is retained.
     target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-            # Link the actual implementation objects providing AppGatewayImplementation symbols.
-            $<TARGET_OBJECTS:AppGatewayL1Test_AppGatewayObjects>
+            # Link the AppGateway plugin shared library (built/installed by the script).
+            # This provides AppGatewayImplementation/Resolver/etc. without re-compiling sources here.
+            ${NAMESPACE}AppGateway
 
-            # Provides `Plugins` module symbol (and other plugin host glue).
+            # Keep existing Thunder plugin host linkage.
             ${TEST_LIB}
 
-            # Provides testing::Test, gmock expectation machinery, and main()
+            # Keep gtest/gmock linkage intact.
             GTest::gtest
             GTest::gmock
             GTest::gtest_main
-
-            # Re-assert after objects to avoid being dropped by --as-needed ordering.
-            ${TEST_LIB}
             )
 
     # Install to ${CMAKE_INSTALL_PREFIX}/bin => install/usr/bin in the workflow.
