@@ -226,11 +226,13 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingParam
     // AppGatewayImplementation stores the shell and will AddRef().
     EXPECT_CALL(service, AddRef()).Times(1);
 
-    AppGatewayImplementation impl;
+    // AppGatewayImplementation is reference-counted (IReferenceCounted).
+    // Core::Sink<> provides the required AddRef/Release implementation.
+    Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
 
     // Now configure resolutions via the public Configure(paths) interface.
-    // Build a minimal iterator inline.
+    // Build a minimal iterator inline that matches the RPC iterator requirements.
     class PathsIterator : public Exchange::IAppGatewayResolver::IStringIterator {
     public:
         explicit PathsIterator(std::vector<std::string> paths)
@@ -251,7 +253,35 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingParam
             return true;
         }
 
-        void Reset() override { _index = 0; }
+        bool Previous(string& value) override
+        {
+            if (_paths.empty() || _index == 0) {
+                return false;
+            }
+            _index--;
+            value = _paths[_index];
+            return true;
+        }
+
+        void Reset(const uint32_t position) override
+        {
+            _index = (position <= _paths.size() ? position : _paths.size());
+        }
+
+        bool IsValid() const override
+        {
+            return (_index < _paths.size());
+        }
+
+        uint32_t Count() const override
+        {
+            return static_cast<uint32_t>(_paths.size());
+        }
+
+        string Current() const override
+        {
+            return (_index < _paths.size() ? _paths[_index] : string());
+        }
 
         BEGIN_INTERFACE_MAP(PathsIterator)
         INTERFACE_ENTRY(Exchange::IAppGatewayResolver::IStringIterator)
@@ -289,7 +319,7 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
     ::testing::StrictMock<ServiceMock> service;
     EXPECT_CALL(service, AddRef()).Times(1);
 
-    AppGatewayImplementation impl;
+    Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
 
     class PathsIterator : public Exchange::IAppGatewayResolver::IStringIterator {
@@ -299,8 +329,10 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
             , _index(0)
         {
         }
+
         void AddRef() const override {}
         uint32_t Release() const override { return Core::ERROR_NONE; }
+
         bool Next(string& value) override
         {
             if (_index >= _paths.size()) {
@@ -309,7 +341,36 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
             value = _paths[_index++];
             return true;
         }
-        void Reset() override { _index = 0; }
+
+        bool Previous(string& value) override
+        {
+            if (_paths.empty() || _index == 0) {
+                return false;
+            }
+            _index--;
+            value = _paths[_index];
+            return true;
+        }
+
+        void Reset(const uint32_t position) override
+        {
+            _index = (position <= _paths.size() ? position : _paths.size());
+        }
+
+        bool IsValid() const override
+        {
+            return (_index < _paths.size());
+        }
+
+        uint32_t Count() const override
+        {
+            return static_cast<uint32_t>(_paths.size());
+        }
+
+        string Current() const override
+        {
+            return (_index < _paths.size() ? _paths[_index] : string());
+        }
 
         BEGIN_INTERFACE_MAP(PathsIterator)
         INTERFACE_ENTRY(Exchange::IAppGatewayResolver::IStringIterator)
@@ -354,7 +415,7 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
     EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::_))
         .WillRepeatedly(::testing::Return(nullptr));
 
-    AppGatewayImplementation impl;
+    Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
 
     class PathsIterator : public Exchange::IAppGatewayResolver::IStringIterator {
@@ -364,8 +425,10 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
             , _index(0)
         {
         }
+
         void AddRef() const override {}
         uint32_t Release() const override { return Core::ERROR_NONE; }
+
         bool Next(string& value) override
         {
             if (_index >= _paths.size()) {
@@ -374,7 +437,36 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
             value = _paths[_index++];
             return true;
         }
-        void Reset() override { _index = 0; }
+
+        bool Previous(string& value) override
+        {
+            if (_paths.empty() || _index == 0) {
+                return false;
+            }
+            _index--;
+            value = _paths[_index];
+            return true;
+        }
+
+        void Reset(const uint32_t position) override
+        {
+            _index = (position <= _paths.size() ? position : _paths.size());
+        }
+
+        bool IsValid() const override
+        {
+            return (_index < _paths.size());
+        }
+
+        uint32_t Count() const override
+        {
+            return static_cast<uint32_t>(_paths.size());
+        }
+
+        string Current() const override
+        {
+            return (_index < _paths.size() ? _paths[_index] : string());
+        }
 
         BEGIN_INTERFACE_MAP(PathsIterator)
         INTERFACE_ENTRY(Exchange::IAppGatewayResolver::IStringIterator)
@@ -424,7 +516,7 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
     EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq("org.rdk.SomeHandler")))
         .WillOnce(::testing::Return(static_cast<void*>(handler)));
 
-    AppGatewayImplementation impl;
+    Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
 
     class PathsIterator : public Exchange::IAppGatewayResolver::IStringIterator {
@@ -434,8 +526,10 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
             , _index(0)
         {
         }
+
         void AddRef() const override {}
         uint32_t Release() const override { return Core::ERROR_NONE; }
+
         bool Next(string& value) override
         {
             if (_index >= _paths.size()) {
@@ -444,7 +538,36 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
             value = _paths[_index++];
             return true;
         }
-        void Reset() override { _index = 0; }
+
+        bool Previous(string& value) override
+        {
+            if (_paths.empty() || _index == 0) {
+                return false;
+            }
+            _index--;
+            value = _paths[_index];
+            return true;
+        }
+
+        void Reset(const uint32_t position) override
+        {
+            _index = (position <= _paths.size() ? position : _paths.size());
+        }
+
+        bool IsValid() const override
+        {
+            return (_index < _paths.size());
+        }
+
+        uint32_t Count() const override
+        {
+            return static_cast<uint32_t>(_paths.size());
+        }
+
+        string Current() const override
+        {
+            return (_index < _paths.size() ? _paths[_index] : string());
+        }
 
         BEGIN_INTERFACE_MAP(PathsIterator)
         INTERFACE_ENTRY(Exchange::IAppGatewayResolver::IStringIterator)

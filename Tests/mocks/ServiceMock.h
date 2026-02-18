@@ -72,6 +72,7 @@ public:
     MOCK_METHOD(void, EnableWebServer, (const string&, const string&), (override));
     MOCK_METHOD(void, DisableWebServer, (), (override));
     MOCK_METHOD(WPEFramework::PluginHost::ISubSystem*, SubSystems, (), (override));
+    MOCK_METHOD(const WPEFramework::PluginHost::ISubSystem*, SubSystems, (), (const, override));
     MOCK_METHOD(uint32_t, Submit, (const uint32_t, const WPEFramework::Core::ProxyType<WPEFramework::Core::JSON::IElement>&), (override));
     MOCK_METHOD(void, Notify, (const string&), (override));
     MOCK_METHOD(void*, QueryInterface, (const uint32_t), (override));
