@@ -229,10 +229,13 @@ if (RDK_SERVICES_L1_TEST)
                 )
     else()
         message(WARNING
-                "Target ${NAMESPACE}AppGateway not found; falling back to linking the installed plugin .so. "
-                "Ensure -DPLUGIN_APPGATEWAY=ON is set during configure.")
+                "Target ${NAMESPACE}AppGateway not found; falling back to linking by library name from the expected plugin install directory. "
+                "Ensure -DPLUGIN_APPGATEWAY=ON is set during configure and that the plugin was installed under "
+                "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins.")
+        # Do not hardcode a specific filename here (namespace/layout can differ); instead, link
+        # by logical name and rely on target_link_directories() above pointing at the plugin dir.
         target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-                ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/lib${NAMESPACE}AppGateway.so
+                ${NAMESPACE}AppGateway
                 )
     endif()
 
