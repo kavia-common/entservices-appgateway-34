@@ -734,32 +734,29 @@ log "[DONE] Steps 1–24 completed (as applicable in this container; steps 22 an
 # -----------------------------------------------------------------------------
 log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for coverage)"
 
-# NOTE:
-# - The workflow runs RdkServicesL1Test from PATH=$GITHUB_WORKSPACE/install/usr/bin
-# - It sets LD_LIBRARY_PATH to include both install/usr/lib and install/usr/lib/wpeframework/plugins
-# - It writes GTEST JSON output and copies it to a stable file name.
+# We run the AppGateway-only L1 binary built from:
+#   Tests/L1Tests/tests/test_AppGateway.cpp
 #
-# In this repo/container-friendly script, we use INSTALL_USR and REPO_DIR to mirror that behavior.
-# This step will fail if RdkServicesL1Test is not present in ${INSTALL_USR}/bin (e.g., if
-# entservices-testframework was not built/installed).
+# This intentionally avoids relying on entservices-testframework's RdkServicesL1Test.
 (
   export PATH="${INSTALL_USR}/bin:${PATH}"
   export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
-  export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+  export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
-  if ! have_cmd RdkServicesL1Test; then
-    err "RdkServicesL1Test not found on PATH. Ensure it is installed to ${INSTALL_USR}/bin."
-    err "Note: per earlier steps, entservices-testframework build was skipped; enable it to produce this binary."
+  if ! have_cmd AppGatewayL1Test; then
+    err "AppGatewayL1Test not found on PATH. Expected it in: ${INSTALL_USR}/bin"
+    err "Ensure Step 23 built/installed this repo with ENABLE_UNIT_TESTS=ON (and that Tests/L1Tests builds the executable)."
     exit 1
   fi
 
-  RdkServicesL1Test
+  # Run the test binary (gtest).
+  AppGatewayL1Test
 
-  # Keep an easy-to-find copy in repo root (workflow parity).
-  cp -f "$(pwd)/rdkL1TestResults.json" "${REPO_DIR}/rdkL1TestResultsWithoutValgrind.json"
-  rm -f "$(pwd)/rdkL1TestResults.json"
+  # Keep an easy-to-find copy in repo root.
+  cp -f "$(pwd)/AppGatewayL1TestResults.json" "${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
+  rm -f "$(pwd)/AppGatewayL1TestResults.json"
 )
-log "[OK] Step 26 complete: ${REPO_DIR}/rdkL1TestResultsWithoutValgrind.json"
+log "[OK] Step 26 complete: ${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
 
 # -----------------------------------------------------------------------------
 # Step 27: Run unit tests with valgrind (NOT REQUIRED for now)
@@ -805,6 +802,7 @@ rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" || true
 
 lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
 
+# First, remove obvious non-product sources.
 lcov -r "${COVERAGE_INFO}" \
   '/usr/include/*' \
   "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
@@ -815,9 +813,27 @@ lcov -r "${COVERAGE_INFO}" \
   '*/Thunder/*' \
   -o "${FILTERED_INFO}"
 
-genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway coverage" "${FILTERED_INFO}"
+# Then, produce an AppGateway-only view by extracting just AppGateway/AppGatewayCommon.
+APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
+lcov -e "${FILTERED_INFO}" \
+  '*/AppGateway/*' \
+  '*/AppGatewayCommon/*' \
+  -o "${APPGW_ONLY_INFO}"
+
+genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) coverage" "${APPGW_ONLY_INFO}"
 
 log "[OK] Coverage generated at: ${COVERAGE_DIR}/index.html"
+
+# Quick sanity check: is the AppGateway plugin .so produced/installed?
+# Typical install location used by the workflows:
+#   ${INSTALL_USR}/lib/wpeframework/plugins
+if ls "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so >/dev/null 2>&1; then
+  log "[OK] AppGateway plugin .so appears present under ${INSTALL_USR}/lib/wpeframework/plugins"
+  ls -la "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so || true
+else
+  warn "AppGateway plugin .so not found under ${INSTALL_USR}/lib/wpeframework/plugins"
+  warn "If this is unexpected, check whether the plugin target is enabled in the top-level build/install."
+fi
 
 # -----------------------------------------------------------------------------
 # Step 29: Upload artifacts (COMMENTED for now)
@@ -840,4 +856,5 @@ echo "  BUILD_ROOT=${BUILD_ROOT}"
 echo "  INSTALL_PREFIX=${INSTALL_USR}"
 echo "  COVERAGE_TOOLCHAIN_FILE=${COVERAGE_TOOLCHAIN_FILE}"
 echo "  APPGATEWAY_BUILD_DIR=${APPGATEWAY_BUILD_DIR}"
+echo "  TEST_RUNNER=AppGatewayL1Test (expected at ${INSTALL_USR}/bin/AppGatewayL1Test)"
 echo "  COVERAGE_DIR=${COVERAGE_DIR:-}"

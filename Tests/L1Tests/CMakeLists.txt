@@ -101,6 +101,9 @@ macro(add_plugin_test plugin_name test_files)
     add_plugin_test_ex(${plugin_opt} "${test_files}" "../../${plugin_name}" "${NAMESPACE}${plugin_name}")
 endmacro()
 
+# -----------------------------------------------------------------------------
+# Existing behavior: build L1 tests as a shared library.
+# -----------------------------------------------------------------------------
 add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
 if (RDK_SERVICES_L1_TEST)
@@ -117,17 +120,49 @@ target_include_directories(${MODULE_NAME}
         PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
+        ${CMAKE_SOURCE_DIR}/Tests/mocks
+        ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+        )
+
+target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
+
+install(TARGETS ${MODULE_NAME} DESTINATION lib)
+write_config(${PLUGIN_NAME})
+
+# -----------------------------------------------------------------------------
+# New behavior: also build a runnable AppGateway-only L1 test executable.
+#
+# This avoids reliance on entservices-testframework's RdkServicesL1Test runner,
+# enabling direct execution for coverage generation.
+# -----------------------------------------------------------------------------
+set(APPGATEWAY_L1_TEST_EXE AppGatewayL1Test)
+
+add_executable(${APPGATEWAY_L1_TEST_EXE} ${TEST_SRC})
+
+# Mirror compile definitions/includes/linking from the shared library target.
+target_compile_definitions(${APPGATEWAY_L1_TEST_EXE} PRIVATE UNIT_TEST)
+
+if (RDK_SERVICES_L1_TEST)
+    target_link_options(${APPGATEWAY_L1_TEST_EXE} PRIVATE "-Wl,-wrap,opendir")
+endif (RDK_SERVICES_L1_TEST)
+
+target_include_directories(${APPGATEWAY_L1_TEST_EXE}
+        PRIVATE
+        ${TEST_INC}
         ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks
         ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/devicesettings
         ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/thunder
         ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
         )
 
-target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
+target_link_directories(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+        ${CMAKE_INSTALL_PREFIX}/lib
+        ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+        )
 
-#install(TARGETS ${PROJECT_NAME} DESTINATION bin)
+target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE ${TEST_LIB})
 
-install(TARGETS ${MODULE_NAME} DESTINATION lib)
-write_config(${PLUGIN_NAME})
+# Install to bin so scripts can run it from INSTALL_USR/bin, consistent with other workflows.
+install(TARGETS ${APPGATEWAY_L1_TEST_EXE} DESTINATION bin)
 
 

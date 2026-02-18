@@ -28,7 +28,7 @@
 #include "AppGatewayImplementation.h"
 #include "Resolver.h"
 
-// entservices-testframework references (see entservices-testframework/Tests/mocks/thunder/*)
+// Local mocks (this repo): Tests/mocks/*
 #include "ServiceMock.h"
 #include "ThunderPortability.h"
 
