@@ -2,24 +2,35 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# appgateway_L1_tests.sh
+# appgateway_L1_tests_withoutACT.sh
 #
 # Purpose:
-#   Run the AppGateway L1 workflow steps 1–18, with ALL repo clones under:
-#     /home/kavia/workspace/code-generation/entservices-appgateway-34
+#   Run the AppGateway L1 workflow steps while keeping repeated executions fast by
+#   reusing already-cloned repos and already-built/install artifacts when present.
 #
-# Additional steps per user_input_ref:
-#   19 Generate external headers        -> COMMENTED/SKIPPED for now (per request)
-#   20 Set gcc/with-coverage toolchain  -> Wire CMAKE_TOOLCHAIN_FILE to
-#                                         entservices-testframework/Tests/gcc-with-coverage.cmake
-#   21 Build googletest                 -> Configure/build/install googletest into install/usr
+# New behavior (this change):
+#   - Detect existing clone/build/install outputs for:
+#       Thunder, ThunderTools, googletest, entservices-apis, entservices-appgateway
+#     and skip clone/configure/build/install steps when they are already present.
+#   - Still allow a clean rebuild when requested (see flags below).
+#
+# Usage:
+#   ./appgateway_L1_tests_withoutACT.sh
+#
+#   Clean rebuild of EVERYTHING (removes build dirs + install prefix):
+#     ./appgateway_L1_tests_withoutACT.sh --clean
+#
+#   Force rebuild (reconfigure+build+install) but keep installs/build dirs:
+#     ./appgateway_L1_tests_withoutACT.sh --rebuild
+#
+#   Force reclone (deletes and re-clones the git repos):
+#     ./appgateway_L1_tests_withoutACT.sh --reclone
 #
 # Notes:
 #   - We do NOT use build_dependencies.sh (all commands live here).
 #   - We do NOT implement the "generate external headers" step at this time.
 #   - Coverage toolchain file from entservices-testframework appends '--coverage'
-#     to CMAKE_CXX_FLAGS; we apply it to builds that should produce coverage data
-#     (notably tests; for now we wire it into the script as a reusable option).
+#     to CMAKE_CXX_FLAGS; we apply it to builds that should produce coverage data.
 # -----------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -72,6 +83,59 @@ git_noninteractive_env() {
   export GIT_ASKPASS=/bin/false
 }
 
+# -----------------------------------------------------------------------------
+# Rebuild / reclone controls (new)
+# -----------------------------------------------------------------------------
+CLEAN=0
+FORCE_REBUILD=0
+FORCE_RECLONE=0
+
+usage() {
+  cat <<EOF
+Usage: $(basename "$0") [--clean] [--rebuild] [--reclone] [--help]
+
+  --clean     Remove build dirs under BUILD_ROOT and remove INSTALL_ROOT.
+              Then rebuild from scratch (repos are NOT recloned unless --reclone).
+  --rebuild   Force (re)configure/build/install steps even if artifacts exist.
+  --reclone   Delete and re-clone git repositories (Thunder/ThunderTools/googletest/entservices-apis).
+  --help      Show this help.
+
+Environment:
+  WORKSPACE_ROOT   Defaults to /home/kavia/workspace/code-generation
+  INSTALL_ROOT     Defaults to \$WORKSPACE_ROOT/install
+  BUILD_ROOT       Defaults to /tmp/entservices-appgateway-build
+EOF
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --clean)
+      CLEAN=1
+      shift
+      ;;
+    --rebuild)
+      FORCE_REBUILD=1
+      shift
+      ;;
+    --reclone)
+      FORCE_RECLONE=1
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      err "Unknown argument: $1"
+      usage
+      exit 2
+      ;;
+  esac
+done
+
+# -----------------------------------------------------------------------------#
+# Git helpers
+# -----------------------------------------------------------------------------#
 ensure_git_checkout_ref() {
   # Ensure that a git repo at dir is checked out to the requested ref (tag/branch).
   # Best-effort and non-interactive.
@@ -117,9 +181,15 @@ ensure_git_checkout_ref() {
 
 ensure_repo_clone_and_checkout() {
   # Ensure a repo exists at dir; if missing clone from url; checkout ref best-effort.
+  # If FORCE_RECLONE=1, delete and re-clone.
   local dir="$1"
   local url="$2"
   local ref="$3"
+
+  if [[ "${FORCE_RECLONE}" -eq 1 ]]; then
+    log "Reclone requested: removing ${dir}"
+    rm -rf "${dir}"
+  fi
 
   if [[ -d "${dir}/.git" ]]; then
     log "Repo present: ${dir}"
@@ -154,12 +224,6 @@ ensure_repo_clone_and_checkout() {
 
 apply_patch_dir() {
   # Apply a patch to a repo directory in an idempotent, non-interactive way.
-  #
-  # Notes:
-  #  - We use --batch to prevent any interactive prompts.
-  #  - We use --forward to skip patches that look already applied.
-  #  - We treat "already applied / reversed / skipping / already exists" outcomes as success,
-  #    so callers can safely re-run the workflow and proceed to subsequent steps.
   local repo_dir="$1"
   local patch_file="$2"
   local p_level="$3"
@@ -200,18 +264,61 @@ apply_patch_dir() {
       return 0
     fi
 
-    # Unknown failure: propagate error to caller (caller may still wrap with run_best_effort).
+    # Unknown failure: propagate error to caller
     echo "${out}" >&2
     return "${rc}"
   )
 }
 
+# -----------------------------------------------------------------------------
+# Build helpers (updated: can skip if build/install artifacts exist)
+# -----------------------------------------------------------------------------
+build_dir_configured() {
+  local build_dir="$1"
+  [[ -f "${build_dir}/CMakeCache.txt" ]]
+}
+
+# PUBLIC_INTERFACE
+is_component_installed() {
+  """Return 0 if an install prefix appears to contain the given component outputs.
+
+  This is a heuristic detection used to skip expensive rebuilds in repeated runs.
+  """
+  local component="$1"
+  local prefix_usr="$2"
+
+  case "${component}" in
+    ThunderTools)
+      [[ -d "${prefix_usr}/include/WPEFramework" || -x "${prefix_usr}/bin/json2code" || -x "${prefix_usr}/bin/JsonGenerator" ]]
+      ;;
+    Thunder)
+      [[ -d "${prefix_usr}/include/WPEFramework" || -d "${prefix_usr}/lib/wpeframework" || -f "${prefix_usr}/lib/libWPEFrameworkCore.so" || -f "${prefix_usr}/lib/libThunderCore.so" ]]
+      ;;
+    googletest)
+      [[ -f "${prefix_usr}/lib/libgtest.a" || -f "${prefix_usr}/lib/libgtest.so" || -f "${prefix_usr}/lib64/libgtest.a" || -f "${prefix_usr}/lib64/libgtest.so" || -d "${prefix_usr}/include/gtest" ]]
+      ;;
+    entservices-apis)
+      # This repo installs headers and potentially libs; we key off "apis/" install being present.
+      [[ -d "${prefix_usr}/include" && ( -d "${prefix_usr}/include/interfaces" || -d "${prefix_usr}/include/WPEFramework" ) ]]
+      ;;
+    entservices-appgateway)
+      [[ -x "${prefix_usr}/bin/AppGatewayL1Test" || -d "${prefix_usr}/lib/wpeframework/plugins" ]]
+      ;;
+    *)
+      return 1
+      ;;
+  esac
+}
+
 cmake_configure_build_install() {
   # Configure/build/install a cmake project using Ninja if available.
-  local src_dir="$1"
-  local build_dir="$2"
-  local install_prefix="$3"
-  shift 3
+  # If FORCE_REBUILD=0 and build dir looks configured and install outputs exist,
+  # skip this step.
+  local component_name="$1"
+  local src_dir="$2"
+  local build_dir="$3"
+  local install_prefix="$4"
+  shift 4
   local -a extra_args=("$@")
 
   if [[ ! -d "${src_dir}" ]]; then
@@ -221,27 +328,32 @@ cmake_configure_build_install() {
 
   mkdir -p "${build_dir}" "${install_prefix}"
 
+  if [[ "${FORCE_REBUILD}" -eq 0 ]] && build_dir_configured "${build_dir}" && is_component_installed "${component_name}" "${install_prefix}"; then
+    log "${component_name}: build dir already configured and install outputs detected under ${install_prefix}; skipping configure/build/install."
+    return 0
+  fi
+
   local -a gen_args=()
   if have_cmd ninja; then
     gen_args=(-G Ninja)
   fi
 
-  log "CMake configure: -S ${src_dir} -B ${build_dir} -DCMAKE_INSTALL_PREFIX=${install_prefix}"
+  log "${component_name}: CMake configure: -S ${src_dir} -B ${build_dir} -DCMAKE_INSTALL_PREFIX=${install_prefix}"
   cmake "${gen_args[@]}" -S "${src_dir}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
     "${extra_args[@]}"
 
-  log "CMake build: ${build_dir}"
+  log "${component_name}: CMake build: ${build_dir}"
   cmake --build "${build_dir}" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 
-  log "CMake install: ${build_dir}"
+  log "${component_name}: CMake install: ${build_dir}"
   cmake --install "${build_dir}"
 }
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Workspace layout (per requirement: ALL clones under this repo directory)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 WORKSPACE_ROOT_DEFAULT="/home/kavia/workspace/code-generation"
 WORKSPACE_ROOT="${WORKSPACE_ROOT:-${WORKSPACE_ROOT_DEFAULT}}"
 
@@ -264,19 +376,25 @@ INSTALL_USR="${INSTALL_ROOT}/usr"
 
 # Central build output dir
 # IMPORTANT:
-#   This defaults to /tmp to avoid permission issues (e.g., build dir owned by root
-#   or mounted read-only), which can cause CMake configure_file "Operation not permitted".
+#   This defaults to /tmp to avoid permission issues.
 BUILD_ROOT="${BUILD_ROOT:-/tmp/entservices-appgateway-build}"
 
-# -----------------------------------------------------------------------------
+# If --clean requested: remove build dirs + install
+if [[ "${CLEAN}" -eq 1 ]]; then
+  log "[CLEAN] Removing build outputs under BUILD_ROOT=${BUILD_ROOT} and install under INSTALL_ROOT=${INSTALL_ROOT}"
+  rm -rf "${BUILD_ROOT}" || true
+  rm -rf "${INSTALL_ROOT}" || true
+fi
+
+# -----------------------------------------------------------------------------#
 # Step 1: Set up cache (SKIP)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 1] Set up cache (SKIP)"
 log "Reason: GitHub Actions cache only."
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 2: Set up Python + pip install jsonref
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 2] Set up Python + pip install jsonref"
 
 if ! have_cmd python3; then
@@ -294,15 +412,15 @@ python3 -m pip install --user -q jsonref
 python3 -c "import jsonref; print('jsonref', getattr(jsonref, '__version__', 'unknown'))"
 log "[OK] Python/pip/jsonref are ready"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 3: ACK External Trigger (OPTIONAL echo/log)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 3] ACK External Trigger (OPTIONAL)"
 log "ACK external trigger: N/A in container run. (Non-blocking step.)"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 4: Set up CMake (Skip if already installed)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 4] Set up CMake (Skip if already installed)"
 if have_cmd cmake; then
   echo "CMake: $(cmake --version | head -n 1)"
@@ -332,9 +450,9 @@ else
   fi
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 5: Install packages
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 5] Install packages"
 
 APT_PACKAGES=(
@@ -370,9 +488,9 @@ else
   printf '  - %s\n' "${APT_PACKAGES[@]}" >&2
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 6: Build trower-base64
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 6] Build trower-base64"
 
 (
@@ -429,41 +547,41 @@ log "[Step 6] Build trower-base64"
   exit 0
 ) || true
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 7: Checkout Thunder (R4.4.1) - CLONE INTO REPO DIR IF MISSING
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 7] Checkout Thunder (Ensure ${THUNDER_DIR} exists at ${THUNDER_REF_REQUIRED})"
 ensure_repo_clone_and_checkout "${THUNDER_DIR}" "https://github.com/rdkcentral/Thunder.git" "${THUNDER_REF_REQUIRED}" || true
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 8: Checkout ThunderTools (R4.4.3) - CLONE INTO REPO DIR IF MISSING
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 8] Checkout ThunderTools (Ensure ${THUNDERTOOLS_DIR} exists at ${THUNDERTOOLS_REF_REQUIRED})"
 ensure_repo_clone_and_checkout "${THUNDERTOOLS_DIR}" "https://github.com/rdkcentral/ThunderTools.git" "${THUNDERTOOLS_REF_REQUIRED}" || true
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 9: Checkout entservices-testframework (develop) - SKIPPED
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 9] Checkout entservices-testframework (SKIPPED)"
 log "Reason: Do not rely on entservices-testframework for patches; patches are sourced from ${PATCHES_DIR}."
 log "However, we DO use entservices-testframework as a reference for the coverage toolchain file in Step 20."
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 10: Checkout entservices-appgateway (this repo)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 10] Checkout entservices-appgateway (Use local repo checkout)"
 echo "This repo: ${REPO_DIR}"
 echo "Workspace root: ${WORKSPACE_ROOT}"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 11: Checkout googletest (v1.15.0) - CLONE INTO REPO DIR
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 11] Checkout googletest (Ensure exists at v1.15.0)"
 ensure_repo_clone_and_checkout "${GTEST_DIR}" "https://github.com/google/googletest.git" "v1.15.0" || true
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 12: Apply patches ThunderTools
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 12] Apply patches ThunderTools"
 if [[ -d "${PATCHES_DIR}" ]]; then
   run_best_effort "ThunderTools patch" apply_patch_dir \
@@ -474,13 +592,14 @@ else
   warn "Patches dir not found at ${PATCHES_DIR}; cannot apply ThunderTools patch."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 13: Build ThunderTools (install into install/usr)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 13] Build ThunderTools"
 if [[ -d "${THUNDERTOOLS_DIR}" ]]; then
   mkdir -p "${BUILD_ROOT}"
   cmake_configure_build_install \
+    "ThunderTools" \
     "${THUNDERTOOLS_DIR}" \
     "${BUILD_ROOT}/ThunderTools" \
     "${INSTALL_USR}" \
@@ -489,9 +608,9 @@ else
   warn "ThunderTools dir not found at ${THUNDERTOOLS_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 14: Apply patches Thunder
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 14] Apply patches Thunder"
 
 if [[ -d "${PATCHES_DIR}" ]]; then
@@ -514,12 +633,13 @@ else
   warn "Patches dir not found at ${PATCHES_DIR}; cannot apply Thunder patches."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 15: Build Thunder (install into install/usr)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 15] Build Thunder"
 if [[ -d "${THUNDER_DIR}" ]]; then
   cmake_configure_build_install \
+    "Thunder" \
     "${THUNDER_DIR}" \
     "${BUILD_ROOT}/Thunder" \
     "${INSTALL_USR}" \
@@ -528,9 +648,9 @@ else
   warn "Thunder dir not found at ${THUNDER_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 16: Checkout entservices-apis (develop) - CLONE INTO REPO DIR
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 16] Checkout entservices-apis (Ensure exists)"
 ensure_repo_clone_and_checkout "${APIS_DIR}" "https://github.com/rdkcentral/entservices-apis.git" "develop" || true
 
@@ -540,9 +660,9 @@ if [[ -f "${APIS_DIR}/jsonrpc/DTV.json" ]]; then
   rm -f "${APIS_DIR}/jsonrpc/DTV.json" || true
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 17: Apply patches entservices-apis
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 17] Apply patch RDKEMW-1007.patch to entservices-apis"
 if [[ -f "${PATCHES_DIR}/RDKEMW-1007.patch" ]]; then
   run_best_effort "entservices-apis patch RDKEMW-1007.patch" apply_patch_dir \
@@ -553,12 +673,13 @@ else
   warn "Missing patch ${PATCHES_DIR}/RDKEMW-1007.patch; cannot apply entservices-apis patch."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 18: Build entservices-apis (install into install/usr)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 18] Build entservices-apis (configure/build/install into install/usr)"
 if [[ -d "${APIS_DIR}" ]]; then
   cmake_configure_build_install \
+    "entservices-apis" \
     "${APIS_DIR}" \
     "${BUILD_ROOT}/entservices-apis" \
     "${INSTALL_USR}"
@@ -566,23 +687,16 @@ else
   warn "entservices-apis dir not found at ${APIS_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 19: Generate external headers (SKIPPED/COMMENTED for now)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 19] Generate external headers (SKIPPED)"
 log "Per request: do later. (Workflow would create minimal headers under entservices-testframework/Tests/headers.)"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 20: Set gcc/with-coverage toolchain
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 20] Set gcc/with-coverage toolchain (wire CMake toolchain file)"
-# Authoritative reference:
-#   networkmanager-34/entservices-testframework/Tests/gcc-with-coverage.cmake
-# That file does:
-#   set(CMAKE_CXX_FLAGS "${CMAKE_CXX_FLAGS} --coverage")
-# which enables GCC coverage instrumentation for compiled C++ code.
-#
-# We expose it as CMAKE_TOOLCHAIN_FILE so any subsequent CMake configure can opt-in.
 COVERAGE_TOOLCHAIN_FILE_DEFAULT="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/gcc-with-coverage.cmake"
 COVERAGE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE:-${COVERAGE_TOOLCHAIN_FILE_DEFAULT}}"
 
@@ -593,13 +707,11 @@ else
   warn "Step 20 will be effectively skipped; coverage flags will not be injected by toolchain."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 21: Build googletest (install into install/usr)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 21] Build googletest (configure/build/install into install/usr)"
 if [[ -d "${GTEST_DIR}" ]]; then
-  # Use the coverage toolchain if available, since gtest might be linked into test
-  # binaries and this keeps everything consistent for coverage builds.
   EXTRA_GTEST_CMAKE_ARGS=(
     -DBUILD_GTEST=ON
     -DBUILD_GMOCK=ON
@@ -612,6 +724,7 @@ if [[ -d "${GTEST_DIR}" ]]; then
   fi
 
   cmake_configure_build_install \
+    "googletest" \
     "${GTEST_DIR}" \
     "${BUILD_ROOT}/googletest" \
     "${INSTALL_USR}" \
@@ -620,41 +733,17 @@ else
   warn "Googletest dir not found at ${GTEST_DIR}; skipping build."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 22: Build mocks (NOT REQUIRED FOR NOW - COMMENTED)
-# -----------------------------------------------------------------------------
-# 22  Build mocks  Configure/build/install mocks library from entservices-testframework/Tests/mocks
-#                  with coverage flags. Required for linking L1 tests. Uses many -I and -include
-#                  flags and --coverage.
-#
-# Per authoritative user_input_ref: step 22 is NOT required for now - keep it commented.
-# log "[Step 22] Build mocks (NOT REQUIRED FOR NOW - SKIPPED)"
-# MOCKS_SRC_DIR="${REPO_DIR}/entservices-testframework/Tests/mocks"
-# if [[ -d "${MOCKS_SRC_DIR}" ]]; then
-#   EXTRA_MOCKS_CMAKE_ARGS=()
-#   if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-#     EXTRA_MOCKS_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
-#   fi
-#   cmake_configure_build_install \
-#     "${MOCKS_SRC_DIR}" \
-#     "${BUILD_ROOT}/mocks" \
-#     "${INSTALL_USR}" \
-#     "${EXTRA_MOCKS_CMAKE_ARGS[@]}"
-# else
-#   warn "Mocks source dir not found at ${MOCKS_SRC_DIR}; skipping."
-# fi
+# -----------------------------------------------------------------------------#
+log "[Step 22] Build mocks (NOT REQUIRED FOR NOW - SKIPPED)"
+log "Per request: step 22 is not required for now."
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 23: Build entservices-appgateway (REQUIRED)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, RDK_SERVICES_L1_TEST=ON)"
-#
-# Configure/build/install this repo with coverage flags and -DRDK_SERVICES_L1_TEST=ON.
-# This ensures Tests/L1Tests is included by the top-level CMake and the AppGatewayL1Test
-# executable is built + installed to ${INSTALL_USR}/bin.
-#
-# Note: workflow builds the whole repo in one build dir (build/entservices-appgateway);
-# coverage collection later points at this directory. We mirror that under BUILD_ROOT.
+
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
 EXTRA_APPGW_CMAKE_ARGS=(
@@ -666,97 +755,44 @@ if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
 fi
 
 cmake_configure_build_install \
+  "entservices-appgateway" \
   "${REPO_DIR}" \
   "${APPGATEWAY_BUILD_DIR}" \
   "${INSTALL_USR}" \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)
-# -----------------------------------------------------------------------------
-# 24  Build entservices-testframework  Configure/build/install the testframework executable(s)
-#                                     with coverage flags. Required because this produces
-#                                     RdkServicesL1Test.
-#
-# Per authoritative user_input_ref: step 24 is also NOT required for now, so we keep it as a note.
+# -----------------------------------------------------------------------------#
 log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
 log "Per request: step 24 is not required for now."
 
 log "[DONE] Steps 1–24 completed (as applicable in this container; steps 22 and 24 skipped per request)."
 
-# -----------------------------------------------------------------------------
-# Steps 25–29 (per user_input_ref, authoritative)
-# -----------------------------------------------------------------------------
-
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 25: Set up files (COMMENTED for now)
-# -----------------------------------------------------------------------------
-# 25  Set up files  Create a set of filesystem paths/files and device nodes.
-#                   Often required for test runtime. May need root/privileged container.
-#                   Per request: COMMENT this for now while running actual testing.
-#
-# The original GitHub Actions workflow (L1-tests.yml) uses sudo + mknod heavily.
-# Keeping a reference snippet here (commented) so it can be enabled if/when needed.
-#
-# log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/device nodes)"
-# sudo mkdir -p -m 777 \
-#   /tmp/test/testApp/etc/apps \
-#   /opt/persistent \
-#   /opt/secure \
-#   /opt/secure/reboot \
-#   /opt/secure/persistent \
-#   /opt/secure/persistent/System \
-#   /opt/persistent/storageManager \
-#   /opt/preinstall \
-#   /opt/logs \
-#   /lib/rdk \
-#   /run/media/sda1/logs/PreviousLogs \
-#   /run/sda1/UsbTestFWUpdate \
-#   /run/sda1/UsbProdFWUpdate \
-#   /run/sda2 \
-#   /var/run/wpa_supplicant \
-#   /tmp/bus/usb/devices/100-123 \
-#   /tmp/bus/usb/devices/101-124 \
-#   /tmp/block/sda/device \
-#   /tmp/block/sdb/device \
-#   /dev/disk/by-id \
-#   /dev
-# # Device nodes creation (requires privileged container/root):
-# # if [ ! -f /dev/sda  ]; then sudo mknod /dev/sda  c 240 0; fi
-# # if [ ! -f /dev/sda1 ]; then sudo mknod /dev/sda1 c 240 0; fi
-# # if [ ! -f /dev/sda2 ]; then sudo mknod /dev/sda2 c 240 0; fi
-# # if [ ! -f /dev/sdb  ]; then sudo mknod /dev/sdb  c 240 0; fi
-# # if [ ! -f /dev/sdb1 ]; then sudo mknod /dev/sdb1 c 240 0; fi
-# # if [ ! -f /dev/sdb2 ]; then sudo mknod /dev/sdb2 c 240 0; fi
-# # Touch/chmod omitted here; refer to .github/workflows/L1-tests.yml for full list.
+# -----------------------------------------------------------------------------#
+log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/device nodes)"
+log "Per request: commented/skipped for now."
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 26: Run unit tests without valgrind (REQUIRED)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for coverage)"
 
-# We run the AppGateway-only L1 binary built from:
-#   Tests/L1Tests/tests/test_AppGateway.cpp
-#
-# This intentionally avoids relying on entservices-testframework's RdkServicesL1Test.
 (
   export PATH="${INSTALL_USR}/bin:${PATH}"
   export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
   export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
-  # Prefer the installed binary (expected under ${INSTALL_USR}/bin), but fall back to the build tree
-  # to make the workflow robust if install() destinations differ across environments.
   TEST_BIN=""
 
   if have_cmd AppGatewayL1Test; then
     TEST_BIN="AppGatewayL1Test"
   else
-    # Common build-tree locations for the CMake target created under Tests/L1Tests.
-    # Note: this path assumes the repo was configured with -S ${REPO_DIR} -B ${APPGATEWAY_BUILD_DIR}.
     if [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test" ]]; then
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test"
     elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe" ]]; then
-      # Just in case someone builds on a Windows-like environment.
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe"
     fi
   fi
@@ -771,26 +807,21 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
   log "Running L1 test binary: ${TEST_BIN}"
   "${TEST_BIN}"
 
-  # Keep an easy-to-find copy in repo root.
   cp -f "$(pwd)/AppGatewayL1TestResults.json" "${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
   rm -f "$(pwd)/AppGatewayL1TestResults.json"
 )
 log "[OK] Step 26 complete: ${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 27: Run unit tests with valgrind (NOT REQUIRED for now)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 27] Run unit tests with valgrind (NOT REQUIRED - skipped; focusing on coverage report)"
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 28: Generate coverage (REQUIRED)
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 log "[Step 28] Generate coverage (REQUIRED)"
 
-# The workflow copies an lcov config from entservices-testframework. In this repo clone,
-# entservices-testframework may not be present; we attempt best-effort:
-# 1) Prefer local checkout if user has it adjacent to this repo (REPO_DIR/entservices-testframework)
-# 2) Otherwise, warn and proceed without custom ~/.lcovrc
 LCOVRC_SRC_1="${REPO_DIR}/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
 LCOVRC_SRC_2="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
 
@@ -804,15 +835,12 @@ else
   warn "lcovrc (.lcovrc_l1) not found; proceeding with default lcov configuration."
 fi
 
-# Coverage capture directory must match where this repo was built with coverage flags.
-# We mirror the workflow's focus: -d build/entservices-appgateway (here: ${APPGATEWAY_BUILD_DIR}).
 if [[ ! -d "${APPGATEWAY_BUILD_DIR}" ]]; then
   err "AppGateway build dir not found for coverage capture: ${APPGATEWAY_BUILD_DIR}"
   err "Step 23 should have built this repo with coverage flags into that directory."
   exit 1
 fi
 
-# Produce coverage outputs under repo root (matches workflow artifact paths).
 COVERAGE_DIR="${REPO_DIR}/coverage"
 COVERAGE_INFO="${REPO_DIR}/coverage.info"
 FILTERED_INFO="${REPO_DIR}/filtered_coverage.info"
@@ -821,7 +849,6 @@ rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" || true
 
 lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
 
-# First, remove obvious non-product sources.
 lcov -r "${COVERAGE_INFO}" \
   '/usr/include/*' \
   "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
@@ -832,7 +859,6 @@ lcov -r "${COVERAGE_INFO}" \
   '*/Thunder/*' \
   -o "${FILTERED_INFO}"
 
-# Then, produce an AppGateway-only view by extracting just AppGateway/AppGatewayCommon.
 APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
 lcov -e "${FILTERED_INFO}" \
   '*/AppGateway/*' \
@@ -843,9 +869,6 @@ genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) covera
 
 log "[OK] Coverage generated at: ${COVERAGE_DIR}/index.html"
 
-# Quick sanity check: is the AppGateway plugin .so produced/installed?
-# Typical install location used by the workflows:
-#   ${INSTALL_USR}/lib/wpeframework/plugins
 if ls "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so >/dev/null 2>&1; then
   log "[OK] AppGateway plugin .so appears present under ${INSTALL_USR}/lib/wpeframework/plugins"
   ls -la "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so || true
@@ -854,15 +877,10 @@ else
   warn "If this is unexpected, check whether the plugin target is enabled in the top-level build/install."
 fi
 
-# -----------------------------------------------------------------------------
+# -----------------------------------------------------------------------------#
 # Step 29: Upload artifacts (COMMENTED for now)
-# -----------------------------------------------------------------------------
-# 29 Upload artifacts is GitHub Actions only. Locally, keep:
-#   - ${REPO_DIR}/coverage/
-#   - ${REPO_DIR}/rdkL1TestResultsWithoutValgrind.json
-#   - ${REPO_DIR}/coverage.info, ${REPO_DIR}/filtered_coverage.info
-#   - valgrind_log (if step 27 is enabled in future)
-# log "[Step 29] Upload artifacts (COMMENTED - not applicable locally)"
+# -----------------------------------------------------------------------------#
+log "[Step 29] Upload artifacts (COMMENTED - not applicable locally)"
 
 echo "Summary:"
 echo "  REPO_DIR=${REPO_DIR}"
@@ -873,6 +891,7 @@ echo "  Googletest=${GTEST_DIR}"
 echo "  Entservices-apis=${APIS_DIR}"
 echo "  BUILD_ROOT=${BUILD_ROOT}"
 echo "  INSTALL_PREFIX=${INSTALL_USR}"
+echo "  CLEAN=${CLEAN} FORCE_REBUILD=${FORCE_REBUILD} FORCE_RECLONE=${FORCE_RECLONE}"
 echo "  COVERAGE_TOOLCHAIN_FILE=${COVERAGE_TOOLCHAIN_FILE}"
 echo "  APPGATEWAY_BUILD_DIR=${APPGATEWAY_BUILD_DIR}"
 echo "  TEST_RUNNER=AppGatewayL1Test (expected at ${INSTALL_USR}/bin/AppGatewayL1Test)"
