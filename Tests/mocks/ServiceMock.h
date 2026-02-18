@@ -72,7 +72,10 @@ public:
     MOCK_METHOD(void, EnableWebServer, (const string&, const string&), (override));
     MOCK_METHOD(void, DisableWebServer, (), (override));
     MOCK_METHOD(WPEFramework::PluginHost::ISubSystem*, SubSystems, (), (override));
+#ifndef USE_THUNDER_R4
+    // Thunder R4 IShell does not define a const overload for SubSystems().
     MOCK_METHOD(const WPEFramework::PluginHost::ISubSystem*, SubSystems, (), (const, override));
+#endif
     MOCK_METHOD(uint32_t, Submit, (const uint32_t, const WPEFramework::Core::ProxyType<WPEFramework::Core::JSON::IElement>&), (override));
     MOCK_METHOD(void, Notify, (const string&), (override));
     MOCK_METHOD(void*, QueryInterface, (const uint32_t), (override));
