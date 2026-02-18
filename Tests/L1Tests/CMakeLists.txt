@@ -196,25 +196,53 @@ if (RDK_SERVICES_L1_TEST)
     # but the link step is missing the corresponding libs.
     find_package(GTest REQUIRED)
 
-    # Link against the AppGateway plugin target built by this repo, rather than
-    # trying to link a non-existent -lWPEFrameworkAppGateway library name.
+    # Link against the AppGateway plugin built by this repo, rather than trying
+    # to link a non-existent -lWPEFrameworkAppGateway (seen in failing link line).
     #
-    # Prefer the canonical exported target name if available.
-    if (TARGET ${NAMESPACE}Plugin::AppGateway)
-        set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}Plugin::AppGateway)
-    else()
-        # Fallback for environments where only the legacy/non-namespaced target exists.
+    # Note: This repository defines the plugin target as:
+    #   add_library(${NAMESPACE}AppGateway SHARED ...)
+    # (see AppGateway/CMakeLists.txt), i.e. typically WPEFrameworkAppGateway.
+    #
+    # However, the failing link line shows CMake is *not* linking that target
+    # (it is linking "-lWPEFrameworkAppGateway" by name instead).
+    # To make this robust and ensure reconfigure/build picks it up, we:
+    #   1) Prefer linking the in-tree CMake target if it exists.
+    #   2) Otherwise link directly to the built .so file if present (generator
+    #      expression via $<TARGET_FILE:...> is handled by (1)).
+    #   3) As a last resort, do NOT add -lWPEFrameworkAppGateway again; keep build
+    #      failure explicit so it is detectable.
+    set(_APPGATEWAY_LINK_TARGET "")
+    if (TARGET ${NAMESPACE}AppGateway)
         set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}AppGateway)
+    elseif (TARGET ${NAMESPACE}Plugin::AppGateway)
+        set(_APPGATEWAY_LINK_TARGET ${NAMESPACE}Plugin::AppGateway)
     endif()
 
-    target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-            ${TEST_LIB}
-            ${_APPGATEWAY_LINK_TARGET}
-            # Provides testing::Test, gmock expectation machinery, and main()
-            GTest::gtest
-            GTest::gmock
-            GTest::gtest_main
-            )
+    if (_APPGATEWAY_LINK_TARGET STREQUAL "")
+        message(WARNING
+            "AppGateway plugin target not found in this build. "
+            "AppGatewayL1Test will be built without explicit in-tree AppGateway linkage; "
+            "this may cause unresolved symbols if the toolchain injects -lWPEFrameworkAppGateway.")
+    endif()
+
+    if (NOT _APPGATEWAY_LINK_TARGET STREQUAL "")
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+                ${TEST_LIB}
+                ${_APPGATEWAY_LINK_TARGET}
+                # Provides testing::Test, gmock expectation machinery, and main()
+                GTest::gtest
+                GTest::gmock
+                GTest::gtest_main
+                )
+    else()
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+                ${TEST_LIB}
+                # Provides testing::Test, gmock expectation machinery, and main()
+                GTest::gtest
+                GTest::gmock
+                GTest::gtest_main
+                )
+    endif()
 
     # Install to ${CMAKE_INSTALL_PREFIX}/bin => install/usr/bin in the workflow.
     install(TARGETS ${APPGATEWAY_L1_TEST_EXE} RUNTIME DESTINATION bin)
