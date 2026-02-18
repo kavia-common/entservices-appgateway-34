@@ -216,12 +216,28 @@ if (RDK_SERVICES_L1_TEST)
 
     find_package(GTest REQUIRED)
 
-    target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-            # Link the AppGateway plugin shared library (built/installed by the script).
-            # This provides AppGatewayImplementation/Resolver/etc. without re-compiling sources here.
-            ${NAMESPACE}AppGateway
+    # Prefer linking by CMake target so CMake supplies the correct full path, rpath,
+    # and transitive dependencies. The plugin is defined in AppGateway/CMakeLists.txt as:
+    #   add_library(${NAMESPACE}AppGateway SHARED ...)
+    # which installs to: lib/${STORAGE_DIRECTORY}/plugins
+    #
+    # If, for some reason, the target is not available (e.g., plugin not enabled),
+    # fall back to linking the installed shared library artifact.
+    if (TARGET ${NAMESPACE}AppGateway)
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+                ${NAMESPACE}AppGateway
+                )
+    else()
+        message(WARNING
+                "Target ${NAMESPACE}AppGateway not found; falling back to linking the installed plugin .so. "
+                "Ensure -DPLUGIN_APPGATEWAY=ON is set during configure.")
+        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
+                ${CMAKE_INSTALL_PREFIX}/lib/${STORAGE_DIRECTORY}/plugins/lib${NAMESPACE}AppGateway.so
+                )
+    endif()
 
-            # Keep existing Thunder plugin host linkage.
+    # Keep existing Thunder plugin host linkage.
+    target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
             ${TEST_LIB}
 
             # Keep gtest/gmock linkage intact.
