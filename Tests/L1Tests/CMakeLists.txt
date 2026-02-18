@@ -138,7 +138,8 @@ target_include_directories(${MODULE_NAME}
         ${CMAKE_SOURCE_DIR}/AppGateway
         )
 
-target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
+# Compile tests (and local mocks) against Thunder R4 interfaces.
+target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST USE_THUNDER_R4)
 
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
 
@@ -169,7 +170,8 @@ if (RDK_SERVICES_L1_TEST)
     add_executable(${APPGATEWAY_L1_TEST_EXE} ${TEST_SRC})
 
     # Mirror compile definitions/includes/linking from the shared library target.
-    target_compile_definitions(${APPGATEWAY_L1_TEST_EXE} PRIVATE UNIT_TEST)
+    # Compile tests (and local mocks) against Thunder R4 interfaces.
+    target_compile_definitions(${APPGATEWAY_L1_TEST_EXE} PRIVATE UNIT_TEST USE_THUNDER_R4)
 
     target_link_options(${APPGATEWAY_L1_TEST_EXE} PRIVATE "-Wl,-wrap,opendir")
 
