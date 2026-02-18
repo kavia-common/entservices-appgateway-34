@@ -620,7 +620,68 @@ else
   warn "Googletest dir not found at ${GTEST_DIR}; skipping build."
 fi
 
-log "[DONE] Steps 1–21 completed (as applicable in this container)."
+# -----------------------------------------------------------------------------
+# Step 22: Build mocks (NOT REQUIRED FOR NOW - COMMENTED)
+# -----------------------------------------------------------------------------
+# 22  Build mocks  Configure/build/install mocks library from entservices-testframework/Tests/mocks
+#                  with coverage flags. Required for linking L1 tests. Uses many -I and -include
+#                  flags and --coverage.
+#
+# Per authoritative user_input_ref: step 22 is NOT required for now - keep it commented.
+# log "[Step 22] Build mocks (NOT REQUIRED FOR NOW - SKIPPED)"
+# MOCKS_SRC_DIR="${REPO_DIR}/entservices-testframework/Tests/mocks"
+# if [[ -d "${MOCKS_SRC_DIR}" ]]; then
+#   EXTRA_MOCKS_CMAKE_ARGS=()
+#   if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
+#     EXTRA_MOCKS_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+#   fi
+#   cmake_configure_build_install \
+#     "${MOCKS_SRC_DIR}" \
+#     "${BUILD_ROOT}/mocks" \
+#     "${INSTALL_USR}" \
+#     "${EXTRA_MOCKS_CMAKE_ARGS[@]}"
+# else
+#   warn "Mocks source dir not found at ${MOCKS_SRC_DIR}; skipping."
+# fi
+
+# -----------------------------------------------------------------------------
+# Step 23: Build entservices-appgateway (REQUIRED)
+# -----------------------------------------------------------------------------
+log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, ENABLE_UNIT_TESTS=ON)"
+#
+# Configure/build/install this repo with coverage flags and -DENABLE_UNIT_TESTS=ON.
+# Required per user_input_ref.
+#
+# Note: workflow builds the whole repo in one build dir (build/entservices-appgateway);
+# coverage collection later points at this directory. We mirror that under BUILD_ROOT.
+APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
+
+EXTRA_APPGW_CMAKE_ARGS=(
+  -DENABLE_UNIT_TESTS=ON
+)
+
+if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
+  EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+fi
+
+cmake_configure_build_install \
+  "${REPO_DIR}" \
+  "${APPGATEWAY_BUILD_DIR}" \
+  "${INSTALL_USR}" \
+  "${EXTRA_APPGW_CMAKE_ARGS[@]}"
+
+# -----------------------------------------------------------------------------
+# Step 24: Build entservices-testframework (NOT REQUIRED FOR NOW)
+# -----------------------------------------------------------------------------
+# 24  Build entservices-testframework  Configure/build/install the testframework executable(s)
+#                                     with coverage flags. Required because this produces
+#                                     RdkServicesL1Test.
+#
+# Per authoritative user_input_ref: step 24 is also NOT required for now, so we keep it as a note.
+log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
+log "Per request: step 24 is not required for now."
+
+log "[DONE] Steps 1–24 completed (as applicable in this container; steps 22 and 24 skipped per request)."
 echo "Summary:"
 echo "  REPO_DIR=${REPO_DIR}"
 echo "  WORKSPACE_ROOT=${WORKSPACE_ROOT}"
@@ -631,3 +692,4 @@ echo "  Entservices-apis=${APIS_DIR}"
 echo "  BUILD_ROOT=${BUILD_ROOT}"
 echo "  INSTALL_PREFIX=${INSTALL_USR}"
 echo "  COVERAGE_TOOLCHAIN_FILE=${COVERAGE_TOOLCHAIN_FILE}"
+echo "  APPGATEWAY_BUILD_DIR=${APPGATEWAY_BUILD_DIR}"
