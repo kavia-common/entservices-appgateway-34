@@ -770,7 +770,7 @@ fi
   # Print a command that mirrors cmake_configure_build_install() as closely as possible.
   # Note: Generator selection (-G Ninja) is handled inside cmake_configure_build_install(),
   # so we log the core configure args that matter for correctness.
-  printf '==> %s: Full CMake configure command: ' "entservices-appgateway"
+  printf '==> entservices-appgateway: Full CMake configure command: '
   printf 'cmake -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
     "${APPGATEWAY_SRC_DIR}" \
     "${APPGATEWAY_BUILD_DIR}" \
