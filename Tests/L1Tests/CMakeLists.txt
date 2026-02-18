@@ -133,7 +133,17 @@ target_include_directories(${MODULE_NAME}
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
         $<INSTALL_INTERFACE:include>
         ${CMAKE_SOURCE_DIR}/Tests/mocks
-        ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+
+        # Thunder/WPEFramework headers:
+        # - In this repo Thunder is vendored under ${CMAKE_SOURCE_DIR}/Thunder (NOT ../Thunder).
+        # - The build uses includes like <plugins/plugins.h>, so include root must be ".../Source".
+        # - Additionally, the installed headers are available as:
+        #     ${CMAKE_INSTALL_PREFIX}/include/WPEFramework/plugins/plugins.h
+        #   so we add that include root as well.
+        ${CMAKE_SOURCE_DIR}/Thunder/Source
+        ${CMAKE_SOURCE_DIR}/Thunder/Source/plugins
+        ${CMAKE_INSTALL_PREFIX}/include/WPEFramework
+
         # Allow tests to include AppGateway headers like "AppGatewayImplementation.h" and "Resolver.h"
         ${CMAKE_SOURCE_DIR}/AppGateway
         )
@@ -196,11 +206,15 @@ if (RDK_SERVICES_L1_TEST)
             ${CMAKE_SOURCE_DIR}/AppGateway
             ${CMAKE_SOURCE_DIR}/helpers
             ${CMAKE_SOURCE_DIR}/Tests/mocks
+
             # Thunder headers are included as <plugins/...>, so the include path must
             # point at Thunder/Source (which contains the "plugins/" folder).
-            ${CMAKE_SOURCE_DIR}/../Thunder/Source
-            # Keep existing include for any headers directly under Source/plugins.
-            ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+            # NOTE: Thunder is vendored under ${CMAKE_SOURCE_DIR}/Thunder in this repo.
+            ${CMAKE_SOURCE_DIR}/Thunder/Source
+            ${CMAKE_SOURCE_DIR}/Thunder/Source/plugins
+
+            # Prefer installed headers when available (these contain WPEFramework/plugins/*)
+            ${CMAKE_INSTALL_PREFIX}/include/WPEFramework
             ${CMAKE_INSTALL_PREFIX}/include
             )
 
@@ -213,9 +227,15 @@ if (RDK_SERVICES_L1_TEST)
             PRIVATE
             ${TEST_INC}
             ${CMAKE_SOURCE_DIR}/Tests/mocks
-            ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+
+            # Thunder/WPEFramework headers (repo-local + installed):
+            ${CMAKE_SOURCE_DIR}/Thunder/Source
+            ${CMAKE_SOURCE_DIR}/Thunder/Source/plugins
+            ${CMAKE_INSTALL_PREFIX}/include/WPEFramework
+
             # Allow tests to include AppGateway headers like "AppGatewayImplementation.h" and "Resolver.h"
             ${CMAKE_SOURCE_DIR}/AppGateway
+
             # googletest install prefix include dir (gtest/gmock headers)
             ${CMAKE_INSTALL_PREFIX}/include
             )
