@@ -232,7 +232,7 @@ if (RDK_SERVICES_L1_TEST)
                 "Target ${NAMESPACE}AppGateway not found; falling back to linking the installed plugin .so. "
                 "Ensure -DPLUGIN_APPGATEWAY=ON is set during configure.")
         target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
-                ${CMAKE_INSTALL_PREFIX}/lib/${STORAGE_DIRECTORY}/plugins/lib${NAMESPACE}AppGateway.so
+                ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/lib${NAMESPACE}AppGateway.so
                 )
     endif()
 
