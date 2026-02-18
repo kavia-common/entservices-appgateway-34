@@ -81,15 +81,15 @@ public:
     MOCK_METHOD(void, AddRef, (), (const, override));
     MOCK_METHOD(uint32_t, Release, (), (const, override));
 
-    // Exchange::IAppNotifications expects its own NotificationContext type.
+    // Thunder R4 IAppNotifications uses AppNotificationContext (not NotificationContext).
     MOCK_METHOD(Core::hresult, Subscribe,
-        (const Exchange::IAppNotifications::NotificationContext& context,
-         const bool subscribe,
-         const string& callsign,
+        (const Exchange::IAppNotifications::AppNotificationContext& context,
+         bool listen,
+         const string& module,
          const string& event),
         (override));
 
-    // NOTE: The rest of IAppNotifications methods (if any) are not needed for these L1 tests.
+    // NOTE: The rest of IAppNotifications methods (Emit/Cleanup) are not needed for these L1 tests.
 };
 
 static Exchange::GatewayContext MakeContext()
