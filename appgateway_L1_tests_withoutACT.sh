@@ -682,8 +682,8 @@ cmake_configure_build_install \
 SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
 
 PLUGIN_CANDIDATES=(
-  "${INSTALL_USR}/usr/lib/wpeframework/plugins/"*AppGateway*.so
   "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so
+  "${INSTALL_USR}/usr/lib/wpeframework/plugins/"*AppGateway*.so
   "${INSTALL_USR}/lib/"*/plugins/*AppGateway*.so
 )
 
