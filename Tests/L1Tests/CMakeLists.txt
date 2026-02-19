@@ -30,7 +30,39 @@ set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
-find_package(${NAMESPACE}Plugins REQUIRED)
+# ---------------------------------------------------------------------------
+# L1Tests-only build support
+#
+# When configuring only Tests/L1Tests (Step 23c), the repo provides the needed
+# CMake package configs under:
+#   <repo>/install/usr/lib/cmake/WPEFrameworkPlugins/WPEFrameworkPluginsConfig.cmake
+#
+# However this CMakeLists historically asks for "${NAMESPACE}Plugins", which
+# resolves to "Plugins" if NAMESPACE is empty. In standalone test builds this
+# can fail because the package name is actually WPEFrameworkPlugins.
+#
+# We bridge this by mapping "Plugins" to WPEFrameworkPlugins *when needed*.
+# This keeps existing flows working while allowing the L1Tests-only configure to
+# succeed with -DCMAKE_PREFIX_PATH=<repo>/install/usr.
+# ---------------------------------------------------------------------------
+if(NOT DEFINED NAMESPACE)
+    set(NAMESPACE "")
+endif()
+
+if("${NAMESPACE}" STREQUAL "")
+    # Prefer the canonical Thunder package name.
+    find_package(WPEFrameworkPlugins REQUIRED)
+
+    # Provide compatibility variables so existing references like
+    #   ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+    # still work (they become Plugins::Plugins when NAMESPACE is empty).
+    if(NOT TARGET Plugins::Plugins AND TARGET WPEFrameworkPlugins::WPEFrameworkPlugins)
+        add_library(Plugins::Plugins ALIAS WPEFrameworkPlugins::WPEFrameworkPlugins)
+    endif()
+else()
+    # For non-empty namespaces keep the original behavior.
+    find_package(${NAMESPACE}Plugins REQUIRED)
+endif()
 
 # -----------------------------------------------------------------------------
 # Shared-object (legacy) test module sources

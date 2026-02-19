@@ -821,6 +821,9 @@ APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway-l1tests-only"
 
 L1TESTS_ONLY_CMAKE_ARGS=(
   -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
+  # Ensure find_package() can locate Thunder plugin package config when building
+  # ONLY Tests/L1Tests (no full install of entservices-appgateway).
+  -DWPEFrameworkPlugins_DIR="${INSTALL_USR}/lib/cmake/WPEFrameworkPlugins"
   -DRDK_SERVICES_L1_TEST=ON
   -DPLUGIN_APPGATEWAY=ON
   -DPLUGIN_APPGATEWAYCOMMON=OFF
