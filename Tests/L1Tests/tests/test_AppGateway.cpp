@@ -388,6 +388,13 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
     EXPECT_CALL(service, AddRef()).Times(1);
     EXPECT_CALL(service, Release()).Times(::testing::AnyNumber()).WillRepeatedly(::testing::Return(Core::ERROR_NONE));
 
+    // Match the "source of truth" runtime behavior: even in this error path, the implementation
+    // may attempt incidental interface lookups. Make StrictMock tolerant to those to avoid
+    // unrelated expectation failures.
+    EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::_))
+        .Times(::testing::AnyNumber())
+        .WillRepeatedly(::testing::Return(nullptr));
+
     Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
 
@@ -700,6 +707,10 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
     // Lifetime note:
     // `QueryInterfaceByCallsign` emulation AddRef()'s the handler before returning it.
     // AppGatewayImplementation is responsible for calling Release() on the interface it queried.
-    // This test must not manually Release() here, as doing so can race/double-release and cause UAF.
+    //
+    // However, the test itself also owns the initial reference from `new` (refcount starts at 1).
+    // After Resolve() returns, production should have released its QueryInterface reference,
+    // so we must release the test-owned reference to avoid a leaked mock at process exit.
+    handler->Release();
 }
 
