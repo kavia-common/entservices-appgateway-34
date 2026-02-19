@@ -239,7 +239,14 @@ if(PLUGIN_APPGATEWAY)
         PRIVATE
         ${APPGATEWAY_L1TEST_INC}
         ${CMAKE_INSTALL_PREFIX}/include
+
+        # Repo-level mocks live at <repo>/Tests/mocks. In a L1Tests-only configure,
+        # CMAKE_SOURCE_DIR points at <repo>/Tests/L1Tests, so we must include both:
+        #  - ${CMAKE_SOURCE_DIR}/Tests/mocks        (works for full-tree configs)
+        #  - ${CMAKE_SOURCE_DIR}/../mocks           (works for L1Tests-only configs)
         ${CMAKE_SOURCE_DIR}/Tests/mocks
+        ${CMAKE_SOURCE_DIR}/../mocks
+
         ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
     )
 
