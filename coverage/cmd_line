@@ -1,0 +1,1 @@
+genhtml -o /home/kavia/workspace/code-generation/entservices-appgateway-34/coverage -t 'entservices-appgateway (AppGateway-only) coverage' /home/kavia/workspace/code-generation/entservices-appgateway-34/appgateway_only_coverage.info
