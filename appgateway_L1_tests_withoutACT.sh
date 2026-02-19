@@ -784,7 +784,10 @@ if [[ ! -f "${SYSTEM_PLUGIN_SO_PATH}" ]]; then
 fi
 
 log "[OK] System plugin dir now contains (AppGateway-related):"
-ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || ls -la "${SYSTEM_PLUGIN_DIR}" || true
+ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
+
+log "[Step 23] System plugin dir listing (*.so*): ${SYSTEM_PLUGIN_DIR}"
+ls -la "${SYSTEM_PLUGIN_DIR}/"*.so* 2>/dev/null || ls -la "${SYSTEM_PLUGIN_DIR}" || true
 
 log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
 log "Per request: step 24 is not required for now."

@@ -24,6 +24,45 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(${NAMESPACE}Plugins REQUIRED)
 
+# -----------------------------------------------------------------------------
+# Helper: link a test target against the installed AppGateway plugin shared lib.
+# - Prefer the system location required by the workflow: /usr/lib/wpeframework/plugins
+# - Fallback to the workflow install prefix: ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+# -----------------------------------------------------------------------------
+function(link_against_installed_appgateway_plugin TARGET_NAME)
+    set(APPGATEWAY_PLUGIN_DIR_SYSTEM "/usr/lib/wpeframework/plugins")
+    set(APPGATEWAY_PLUGIN_DIR_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins")
+
+    file(GLOB APPGATEWAY_PLUGIN_SO_SYSTEM
+        "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so"
+        "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so.*"
+    )
+    file(GLOB APPGATEWAY_PLUGIN_SO_PREFIX
+        "${APPGATEWAY_PLUGIN_DIR_PREFIX}/*AppGateway*.so"
+        "${APPGATEWAY_PLUGIN_DIR_PREFIX}/*AppGateway*.so.*"
+    )
+
+    # Make selection deterministic.
+    if (APPGATEWAY_PLUGIN_SO_SYSTEM)
+        list(SORT APPGATEWAY_PLUGIN_SO_SYSTEM)
+        list(GET APPGATEWAY_PLUGIN_SO_SYSTEM 0 APPGATEWAY_PLUGIN_SO)
+        message(STATUS "Linking ${TARGET_NAME} against installed AppGateway plugin (system): ${APPGATEWAY_PLUGIN_SO}")
+        target_link_libraries(${TARGET_NAME} PRIVATE "${APPGATEWAY_PLUGIN_SO}")
+    elseif (APPGATEWAY_PLUGIN_SO_PREFIX)
+        list(SORT APPGATEWAY_PLUGIN_SO_PREFIX)
+        list(GET APPGATEWAY_PLUGIN_SO_PREFIX 0 APPGATEWAY_PLUGIN_SO)
+        message(STATUS "Linking ${TARGET_NAME} against installed AppGateway plugin (prefix): ${APPGATEWAY_PLUGIN_SO}")
+        target_link_libraries(${TARGET_NAME} PRIVATE "${APPGATEWAY_PLUGIN_SO}")
+    else()
+        message(FATAL_ERROR
+            "AppGateway plugin shared library not found.\n"
+            "Searched for '*AppGateway*.so' in:\n"
+            "  - ${APPGATEWAY_PLUGIN_DIR_SYSTEM}\n"
+            "  - ${APPGATEWAY_PLUGIN_DIR_PREFIX}\n"
+            "Ensure configure uses -DPLUGIN_APPGATEWAY=ON and the plugin has been built+installed.")
+    endif()
+endfunction()
+
 set (TEST_SRC
     tests/test_AppGateway.cpp
 )
@@ -128,6 +167,12 @@ target_link_directories(${MODULE_NAME} PUBLIC ${CMAKE_INSTALL_PREFIX}/lib ${CMAK
 
 target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
+# When RDK_SERVICES_L1_TEST is enabled, test objects reference AppGateway symbols.
+# Link against the installed plugin shared library to resolve them.
+if (RDK_SERVICES_L1_TEST)
+    link_against_installed_appgateway_plugin(${MODULE_NAME})
+endif()
+
 target_include_directories(${MODULE_NAME}
         PUBLIC
         $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
@@ -216,53 +261,8 @@ if (RDK_SERVICES_L1_TEST)
 
     find_package(GTest REQUIRED)
 
-    # Link against the *installed* AppGateway plugin shared library rather than the
-    # in-tree plugin target or plugin sources.
-    #
-    # Rationale:
-    #   - Ensures tests validate the real plugin artifact and its exported symbols.
-    #   - Avoids symbol duplication (e.g., Thunder module metadata) that can occur when
-    #     plugin sources/targets are pulled into the test link.
-    #
-    # Primary expected install location per task requirement:
-    #   /usr/lib/wpeframework/plugins/<plugin>.so
-    #
-    # Secondary fallback:
-    #   ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins/<plugin>.so
-    #
-    # NOTE:
-    #   The actual filename depends on the ${NAMESPACE} used by the WPEFramework
-    #   build (often "WPEFramework"), so we search by pattern rather than
-    #   hardcoding "libWPEFrameworkAppGateway.so".
-    set(APPGATEWAY_PLUGIN_DIR_SYSTEM "/usr/lib/wpeframework/plugins")
-    set(APPGATEWAY_PLUGIN_DIR_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins")
-
-    file(GLOB APPGATEWAY_PLUGIN_SO_SYSTEM
-        "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so"
-        "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so.*"
-    )
-    file(GLOB APPGATEWAY_PLUGIN_SO_PREFIX
-        "${APPGATEWAY_PLUGIN_DIR_PREFIX}/*AppGateway*.so"
-        "${APPGATEWAY_PLUGIN_DIR_PREFIX}/*AppGateway*.so.*"
-    )
-
-    # Prefer the system dir (explicit requirement), then prefix dir.
-    if (APPGATEWAY_PLUGIN_SO_SYSTEM)
-        list(GET APPGATEWAY_PLUGIN_SO_SYSTEM 0 APPGATEWAY_PLUGIN_SO)
-        message(STATUS "Linking AppGatewayL1Test against installed plugin (system): ${APPGATEWAY_PLUGIN_SO}")
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO}")
-    elseif (APPGATEWAY_PLUGIN_SO_PREFIX)
-        list(GET APPGATEWAY_PLUGIN_SO_PREFIX 0 APPGATEWAY_PLUGIN_SO)
-        message(STATUS "Linking AppGatewayL1Test against installed plugin (prefix): ${APPGATEWAY_PLUGIN_SO}")
-        target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE "${APPGATEWAY_PLUGIN_SO}")
-    else()
-        message(FATAL_ERROR
-            "AppGateway plugin shared library not found.\n"
-            "Searched for '*AppGateway*.so' in:\n"
-            "  - ${APPGATEWAY_PLUGIN_DIR_SYSTEM}\n"
-            "  - ${APPGATEWAY_PLUGIN_DIR_PREFIX}\n"
-            "Ensure configure uses -DPLUGIN_APPGATEWAY=ON and the plugin has been built+installed.")
-    endif()
+    # Link against the installed AppGateway plugin shared library (system dir preferred).
+    link_against_installed_appgateway_plugin(${APPGATEWAY_L1_TEST_EXE})
 
     # Keep existing Thunder plugin host linkage.
     target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
