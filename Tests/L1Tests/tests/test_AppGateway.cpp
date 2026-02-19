@@ -20,6 +20,7 @@
 #include <gmock/gmock.h>
 #include <gtest/gtest.h>
 
+#include <atomic>
 #include <fstream>
 #include <string>
 
@@ -88,14 +89,29 @@ static void WriteTextFile(const std::string& path, const std::string& content)
  */
 class AppGatewayRequestHandlerMock : public Exchange::IAppGatewayRequestHandler {
 public:
+    AppGatewayRequestHandlerMock()
+        : _refCount(1)
+    {
+    }
+
     ~AppGatewayRequestHandlerMock() override = default;
 
     BEGIN_INTERFACE_MAP(AppGatewayRequestHandlerMock)
     INTERFACE_ENTRY(Exchange::IAppGatewayRequestHandler)
     END_INTERFACE_MAP
 
-    MOCK_METHOD(void, AddRef, (), (const, override));
-    MOCK_METHOD(uint32_t, Release, (), (const, override));
+    // Provide real refcounting so tests don't leak mocks.
+    // GoogleMock verifies expectations in destructor; if production code keeps the object alive,
+    // the test must ensure a matching Release() path happens.
+    void AddRef() const override { _refCount++; }
+    uint32_t Release() const override
+    {
+        const uint32_t result = --_refCount;
+        if (result == 0) {
+            delete this;
+        }
+        return result;
+    }
 
     MOCK_METHOD(Core::hresult, HandleAppGatewayRequest,
         (const Exchange::GatewayContext& context,
@@ -103,6 +119,9 @@ public:
          const string& params,
          string& response),
         (override));
+
+private:
+    mutable std::atomic<uint32_t> _refCount;
 };
 
 class AppNotificationsMock : public Exchange::IAppNotifications {
@@ -262,8 +281,9 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingParam
     )json");
 
     ::testing::StrictMock<ServiceMock> service;
-    // AppGatewayImplementation stores the shell and will AddRef().
+    // AppGatewayImplementation stores the shell and will AddRef()/Release().
     EXPECT_CALL(service, AddRef()).Times(1);
+    EXPECT_CALL(service, Release()).Times(::testing::AnyNumber()).WillRepeatedly(::testing::Return(Core::ERROR_NONE));
 
     // AppGatewayImplementation is reference-counted (IReferenceCounted).
     // Core::Sink<> provides the required AddRef/Release implementation.
@@ -357,6 +377,7 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
 
     ::testing::StrictMock<ServiceMock> service;
     EXPECT_CALL(service, AddRef()).Times(1);
+    EXPECT_CALL(service, Release()).Times(::testing::AnyNumber()).WillRepeatedly(::testing::Return(Core::ERROR_NONE));
 
     Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
@@ -446,6 +467,7 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
 
     ::testing::StrictMock<ServiceMock> service;
     EXPECT_CALL(service, AddRef()).Times(1);
+    EXPECT_CALL(service, Release()).Times(::testing::AnyNumber()).WillRepeatedly(::testing::Return(Core::ERROR_NONE));
 
     // No handler provided => QueryInterfaceByCallsign returns nullptr.
     // Template method QueryInterfaceByCallsign ultimately calls:
@@ -546,20 +568,24 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
 
     ::testing::StrictMock<ServiceMock> service;
     EXPECT_CALL(service, AddRef()).Times(1);
+    EXPECT_CALL(service, Release()).Times(::testing::AnyNumber()).WillRepeatedly(::testing::Return(Core::ERROR_NONE));
 
     // Provide a request handler mock instance and return it via QueryInterfaceByCallsign.
     // NOTE: AppGatewayImplementation will call Release() on the handler when done.
-    auto* handler = new ::testing::StrictMock<AppGatewayRequestHandlerMock>();
-    EXPECT_CALL(*handler, AddRef()).Times(::testing::AnyNumber());
-
-    // Relax Release() expectations: exact refcounting depends on QueryInterface plumbing,
-    // and enforcing a single Release combined with manual delete risks double-free.
-    EXPECT_CALL(*handler, Release()).Times(::testing::AnyNumber()).WillRepeatedly(::testing::Return(Core::ERROR_NONE));
+    //
+    // IMPORTANT: Do NOT leak the mock. We use a refcounted mock implementation:
+    // - We create it with refcount=1
+    // - Service "QueryInterfaceByCallsign" simulates COM behavior by AddRef() before returning it
+    // - Production code calls Release(), which deletes it when refcount hits 0
+    auto* handler = new AppGatewayRequestHandlerMock();
 
     // Return the handler when alias callsign matches; allow repeats (implementation may re-query).
     EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq("org.rdk.SomeHandler")))
         .Times(::testing::AnyNumber())
-        .WillRepeatedly(::testing::Return(static_cast<void*>(handler)));
+        .WillRepeatedly(::testing::Invoke([&](const uint32_t, const string&) -> void* {
+            handler->AddRef();
+            return static_cast<void*>(handler);
+        }));
 
     // AppGatewayImplementation may also try to send an internal responder message (async)
     // via SendToLaunchDelegate(), which looks up "org.rdk.LaunchDelegate".
