@@ -35,15 +35,12 @@ find_package(${NAMESPACE}Plugins REQUIRED)
 #   - Link against an already-installed plugin .so (system or install prefix).
 # -----------------------------------------------------------------------------
 function(link_against_appgateway_plugin TARGET_NAME)
-    # If the plugin is part of this build, link directly to the target.
-    # This guarantees correct build order and avoids undefined references.
-    if (TARGET ${NAMESPACE}AppGateway)
-        message(STATUS "Linking ${TARGET_NAME} against AppGateway plugin target: ${NAMESPACE}AppGateway")
-        target_link_libraries(${TARGET_NAME} PRIVATE ${NAMESPACE}AppGateway)
-        return()
-    endif()
+    # IMPORTANT:
+    # These tests must link against the *installed* AppGateway plugin .so, not a build-tree
+    # plugin target. This prevents accidental linkage against non-installed artifacts and
+    # avoids unresolved symbols during verification when only the installed plugin is present.
 
-    # Otherwise, attempt to link against an installed .so.
+    # System plugin install location required by the workflow.
     set(APPGATEWAY_PLUGIN_DIR_SYSTEM "/usr/lib/wpeframework/plugins")
 
     # Prefer the plugin directory configured by the top-level build.
