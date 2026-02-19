@@ -68,9 +68,9 @@ endif()
 # Shared-object (legacy) test module sources
 #   NOTE: Per request, keep this limited to test_UtilsFile.cpp for now.
 # -----------------------------------------------------------------------------
-set(TEST_SRC
-    tests/test_UtilsFile.cpp
-)
+#set(TEST_SRC
+#    tests/test_UtilsFile.cpp
+#)
 
 set(TEST_LIB
     ${NAMESPACE}Plugins::${NAMESPACE}Plugins
@@ -175,33 +175,44 @@ endmacro()
 
 # -----------------------------------------------------------------------------
 # Legacy shared object
+#
+# In "L1Tests-only" configurations we may intentionally have no legacy test
+# sources enabled (TEST_SRC empty). CMake errors if we create a library target
+# without sources ("No SOURCES given to target"). Guard it so AppGatewayL1Test
+# can still be built and coverage can run.
 # -----------------------------------------------------------------------------
-add_library(${MODULE_NAME} SHARED ${TEST_SRC})
+if(TEST_SRC)
+    add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
-if(RDK_SERVICES_L1_TEST)
-    target_link_options(${MODULE_NAME} PRIVATE "-Wl,-wrap,opendir")
-endif(RDK_SERVICES_L1_TEST)
+    if(RDK_SERVICES_L1_TEST)
+        target_link_options(${MODULE_NAME} PRIVATE "-Wl,-wrap,opendir")
+    endif(RDK_SERVICES_L1_TEST)
 
-target_link_directories(${MODULE_NAME} PUBLIC
-    ${CMAKE_INSTALL_PREFIX}/lib
-    ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
-)
+    target_link_directories(${MODULE_NAME} PUBLIC
+        ${CMAKE_INSTALL_PREFIX}/lib
+        ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+    )
 
-target_link_libraries(${MODULE_NAME} ${TEST_LIB})
+    target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
-target_include_directories(${MODULE_NAME}
-    PUBLIC
-    ${TEST_INC}
-    ${CMAKE_INSTALL_PREFIX}/include
-    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-    $<INSTALL_INTERFACE:include>
-    ${CMAKE_SOURCE_DIR}/Tests/mocks
-    ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
-)
+    target_include_directories(${MODULE_NAME}
+        PUBLIC
+        ${TEST_INC}
+        ${CMAKE_INSTALL_PREFIX}/include
+        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+        $<INSTALL_INTERFACE:include>
+        ${CMAKE_SOURCE_DIR}/Tests/mocks
+        ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+    )
 
-target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
+    target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
 
-install(TARGETS ${MODULE_NAME} DESTINATION lib)
+    install(TARGETS ${MODULE_NAME} DESTINATION lib)
+else()
+    message(STATUS "Skipping ${MODULE_NAME} (no legacy L1 test sources enabled)")
+endif()
+
+# Always write the L1Tests plugin config JSON used by the test runtime.
 # Use the non-deprecated invocation form expected by FindConfigGenerator.cmake.
 write_config(PLUGINS ${PLUGIN_NAME})
 
