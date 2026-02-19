@@ -28,6 +28,8 @@
 #include "AppGatewayImplementation.h"
 #include "Resolver.h"
 
+#include "WorkerPoolImplementation.h"
+
 // Local mocks (this repo): Tests/mocks/*
 #include "ServiceMock.h"
 #include "ThunderPortability.h"
@@ -36,6 +38,39 @@ using namespace WPEFramework;
 using namespace WPEFramework::Plugin;
 
 namespace {
+
+// RAII guard to ensure Core::IWorkerPool is available during tests.
+// Many WPEFramework components assume a global worker pool exists (normally created by Thunder runtime).
+class WorkerPoolGuard final {
+public:
+    WorkerPoolGuard(const WorkerPoolGuard&) = delete;
+    WorkerPoolGuard& operator=(const WorkerPoolGuard&) = delete;
+
+    WorkerPoolGuard()
+        : _pool(/*threads*/ 2, /*stackSize*/ 0, /*queueSize*/ 64)
+        , _assigned(false)
+    {
+        if (Core::IWorkerPool::IsAvailable() == false) {
+            Core::IWorkerPool::Assign(&_pool);
+            _assigned = true;
+        }
+        _pool.Run();
+    }
+
+    ~WorkerPoolGuard()
+    {
+        _pool.Stop();
+        if (_assigned) {
+            Core::IWorkerPool::Assign(nullptr);
+        }
+    }
+
+private:
+    WorkerPoolImplementation _pool;
+    bool _assigned;
+};
+
+static WorkerPoolGuard g_workerPool; // ensure constructed before any tests run
 
 // Small helper to write text files under /tmp for config-driven tests.
 static void WriteTextFile(const std::string& path, const std::string& content)

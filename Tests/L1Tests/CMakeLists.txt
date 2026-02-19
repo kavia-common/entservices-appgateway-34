@@ -339,7 +339,7 @@ if(PLUGIN_APPGATEWAY)
     target_include_directories(AppGatewayL1Test
         PRIVATE
         ${APPGATEWAY_L1TEST_INC}
-        ${CMAKE_INSTALL_PREFIX}/include
+        ${CMAKE_install_prefix}/include
 
         # Repo-level mocks live at <repo>/Tests/mocks. In a L1Tests-only configure,
         # CMAKE_SOURCE_DIR points at <repo>/Tests/L1Tests, so we must include both:

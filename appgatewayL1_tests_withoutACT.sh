@@ -903,6 +903,32 @@ log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/dev
 log "Per request: commented/skipped for now."
 
 # -----------------------------------------------------------------------------
+# Step 25b: Stage AppGateway config root from repo (NO /etc dependency)
+#
+# AppGatewayImplementation L1 tests may try to open:
+#   /etc/app-gateway/resolution.base.json
+# when no override config path is provided.
+#
+# In CI/non-root environments we cannot create /etc/app-gateway, so we stage the
+# repo's default file into /tmp and export APPGATEWAY_CONFIG_PATH so the plugin
+# can locate it without falling back to /etc.
+# -----------------------------------------------------------------------------
+log "[Step 25b] Stage AppGateway resolution.base.json from repo into writable config root"
+
+APPGW_CFG_ROOT="/tmp/app-gateway"
+APPGW_CFG_FILE_SRC="${REPO_DIR}/AppGateway/resolutions/resolution.base.json"
+APPGW_CFG_FILE_DST="${APPGW_CFG_ROOT}/resolution.base.json"
+
+mkdir -p "${APPGW_CFG_ROOT}"
+if [[ -f "${APPGW_CFG_FILE_SRC}" ]]; then
+  cp -f "${APPGW_CFG_FILE_SRC}" "${APPGW_CFG_FILE_DST}"
+  log "[OK] Staged: ${APPGW_CFG_FILE_DST}"
+else
+  warn "Repo resolution.base.json not found at: ${APPGW_CFG_FILE_SRC}"
+  warn "Tests may still fail if they rely on fallback config loading."
+fi
+
+# -----------------------------------------------------------------------------
 # Step 26: Build and run AppGateway L1 test binary (REQUIRED for .gcda)
 # -----------------------------------------------------------------------------
 log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for coverage)"
@@ -915,6 +941,11 @@ log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for
   #  - install/usr/lib (+ lib64 on some distros)
   #  - install/usr/lib/wpeframework/plugins (local plugin staging, real .so names)
   export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib64:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+
+  # Point AppGatewayImplementation at a non-/etc config root (staged in Step 25b).
+  # NOTE: This must be honored by the implementation/test harness; it is the
+  # mechanism used by the L1 environment to avoid /etc/app-gateway dependency.
+  export APPGATEWAY_CONFIG_PATH="${APPGW_CFG_ROOT}"
 
   export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
