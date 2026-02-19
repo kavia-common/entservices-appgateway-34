@@ -220,6 +220,19 @@ write_config(PLUGINS ${PLUGIN_NAME})
 # AppGatewayL1Test executable (required by the workflow/script)
 # -----------------------------------------------------------------------------
 if(PLUGIN_APPGATEWAY)
+    # GoogleTest/GoogleMock:
+    # The CI flow (Step 21) installs googletest into the repo-local prefix:
+    #   <repo>/install/usr
+    # and provides a CMake package at:
+    #   <prefix>/lib/cmake/GTest
+    #
+    # In the L1Tests-only build (Step 23), the caller is expected to pass:
+    #   -DCMAKE_PREFIX_PATH=<repo>/install/usr
+    #
+    # Using the imported targets ensures include paths (for <gmock/gmock.h>)
+    # and link libraries are correctly propagated.
+    find_package(GTest REQUIRED)
+
     add_executable(AppGatewayL1Test ${APPGATEWAY_L1TEST_SRC})
 
     target_include_directories(AppGatewayL1Test
@@ -237,10 +250,10 @@ if(PLUGIN_APPGATEWAY)
 
     target_link_libraries(AppGatewayL1Test PRIVATE
         ${APPGATEWAY_L1TEST_LIB}
-        gmock
-        gtest
-        gtest_main
-        pthread
+        GTest::gmock
+        GTest::gtest
+        GTest::gtest_main
+        Threads::Threads
     )
 
     target_compile_definitions(AppGatewayL1Test PRIVATE UNIT_TEST)
