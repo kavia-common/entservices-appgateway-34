@@ -743,6 +743,9 @@ L1TESTS_ONLY_CMAKE_ARGS=(
   # Build the plugin sources so the required .so files are produced
   -DPLUGIN_APPGATEWAY=ON
   -DPLUGIN_APPGATEWAYCOMMON=ON
+
+  # AppNotifications is optional in this L1 flow. If enabled, its output location/name
+  # may differ depending on CMake options; Step 23 staging below will handle both.
   -DPLUGIN_APPNOTIFICATIONS=OFF
 
   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
@@ -826,21 +829,58 @@ stage_all_plugins_from_dir_best_effort() {
   fi
 }
 
-# Build output layout:
-#   - AppGateway plugin .so is expected under: <build>/AppGateway/
-#   - AppNotifications plugin .so under:      <build>/AppNotifications/
-#   - AppGatewayCommon plugin .so under:      <build>/AppGatewayCommon/
-#   - L1TestsIN test module .so under:        <build>/ (root)
+stage_plugin_with_expected_name() {
+  local src_glob="$1"
+  local desc="$2"
+  local expected_basename="$3"
+
+  # Use eval so callers can pass quoted globs safely.
+  local so_path=""
+  so_path="$(eval "ls -1 ${src_glob} 2>/dev/null | head -n 1" || true)"
+
+  if [[ -z "${so_path}" || ! -f "${so_path}" ]]; then
+    err "Step 23 did not produce ${desc} .so at expected location."
+    err "Checked glob: ${src_glob}"
+    exit 1
+  fi
+
+  # Stage the artifact as-is (useful for debugging / direct linkage).
+  cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/"
+
+  # Also stage using the expected WPEFramework plugin naming if different.
+  # This fixes the mismatch seen in the authoritative log where the build
+  # output is AppGateway/libAppGateway.so but downstream expects a different name.
+  if [[ -n "${expected_basename}" ]]; then
+    cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/${expected_basename}"
+    log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/${expected_basename} (from $(basename "${so_path}"))"
+  else
+    log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/$(basename "${so_path}")"
+  fi
+}
+
+# Build output layout (authoritative per attached log for L1Tests-only build):
+#   - AppGateway plugin .so is under:         <build>/AppGateway/libAppGateway.so
+#   - AppGatewayCommon plugin .so is under:   <build>/AppGatewayCommon/libAppGatewayCommon.so
+#   - AppNotifications plugin .so (if built) is commonly under:
+#       <build>/AppNotifications/libAppNotifications.so
+#     but may also land directly under <build>/AppNotifications/ or other generator-specific locations.
+#   - L1TestsIN test module .so is under:     <build>/ (root)
 #
 # Stage per-plugin dirs first (best effort), then enforce the two hard requirements:
-#   - AppGateway plugin .so
+#   - AppGateway plugin .so (and stage under expected WPEFramework plugin naming)
 #   - L1TestsIN test module .so
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGateway" "AppGateway"
-stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppNotifications" "AppNotifications"
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGatewayCommon" "AppGatewayCommon"
 
+# AppNotifications staging:
+# If PLUGIN_APPNOTIFICATIONS is OFF (default in this script), this directory will not exist.
+# If enabled, stage whatever .so is produced from its build dir.
+stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppNotifications" "AppNotifications"
+
 # AppGateway plugin (hard requirement)
-stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*\"" "AppGateway plugin"
+# - Actual output:    AppGateway/libAppGateway.so
+# - Expected naming:  libWPEFrameworkAppGateway.so (what downstream scripts/environments often look for)
+stage_plugin_with_expected_name "\"${APPGATEWAY_BUILD_DIR}/AppGateway/libAppGateway.so*\"" "AppGateway plugin" "libWPEFrameworkAppGateway.so"
 
 # L1TestsIN plugin module (hard requirement; built from Tests/L1Tests add_library(${MODULE_NAME} ...))
 stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/*.so*\"" "L1TestsIN test module"
