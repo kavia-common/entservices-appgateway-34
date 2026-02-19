@@ -104,6 +104,13 @@ namespace Plugin {
         Core::hresult HandleEvent(const Context &context, const string &alias, const string &event, const string &origin,  const bool listen);
                 
         void ReturnMessageInSocket(const Context& context, const string payload ) {
+            // Async jobs can outlive the plugin instance in unit tests / teardown scenarios.
+            // If mService is already released, we must not call into it.
+            if (mService == nullptr) {
+                LOGWARN("ReturnMessageInSocket skipped: service is null (likely during teardown)");
+                return;
+            }
+
             if (mAppGatewayResponder==nullptr) {
                 mAppGatewayResponder = mService->QueryInterface<Exchange::IAppGatewayResponder>();
             }

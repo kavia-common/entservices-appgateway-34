@@ -378,7 +378,17 @@ namespace WPEFramework
             Core::hresult result = FetchResolvedData(context, method, params, origin, resolution);
             if (!resolution.empty()) {
                 LOGTRACE("Final resolution: %s", resolution.c_str());
-                Core::IWorkerPool::Instance().Submit(RespondJob::Create(this, context, resolution, origin));
+
+                // NOTE:
+                // Resolve() schedules an async response via WorkerPool. In unit tests (and potentially
+                // during shutdown), AppGatewayImplementation may be destroyed before the job runs.
+                // The destructor releases mService and sets it to nullptr, so any job running later
+                // must not dereference mService.
+                if (mService != nullptr) {
+                    Core::IWorkerPool::Instance().Submit(RespondJob::Create(this, context, resolution, origin));
+                } else {
+                    LOGWARN("Skipping async response dispatch: service is null (likely during teardown)");
+                }
             }
             return result;
         }
@@ -549,7 +559,14 @@ namespace WPEFramework
 
         void AppGatewayImplementation::SendToLaunchDelegate(const Context& context, const string& payload)
         {
-            if ( mInternalGatewayResponder==nullptr ) {
+            // Async jobs can outlive the plugin instance in unit tests / teardown scenarios.
+            // If mService is already released, we must not call into it.
+            if (mService == nullptr) {
+                LOGWARN("SendToLaunchDelegate skipped: service is null (likely during teardown)");
+                return;
+            }
+
+            if (mInternalGatewayResponder == nullptr) {
                 mInternalGatewayResponder = mService->QueryInterfaceByCallsign<Exchange::IAppGatewayResponder>(INTERNAL_GATEWAY_CALLSIGN);
                 if (mInternalGatewayResponder == nullptr) {
                     LOGERR("Internal Responder not available Not available");
@@ -558,7 +575,6 @@ namespace WPEFramework
             }
 
             mInternalGatewayResponder->Respond(context, payload);
-
         }
 
         bool AppGatewayImplementation::SetupAppGatewayAuthenticator() {
