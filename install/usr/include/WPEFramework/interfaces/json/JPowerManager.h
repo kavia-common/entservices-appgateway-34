@@ -379,52 +379,34 @@ namespace Exchange {
 
         namespace Event {
 
-            // Event: 'onDeepSleepTimeout' - Deep sleep timeout event
-            static void OnDeepSleepTimeout(const JSONRPC& _module_, const JsonData::PowerManager::OnDeepSleepTimeoutParamsData& params)
+            // Event: 'onThermalModeChanged' - Thermal Mode changed event
+            static void OnThermalModeChanged(const JSONRPC& _module_, const JsonData::PowerManager::OnThermalModeChangedParamsData& params)
             {
-                _module_.Notify(_T("onDeepSleepTimeout"), params);
+                _module_.Notify(_T("onThermalModeChanged"), params);
             }
 
-            // Event: 'onDeepSleepTimeout' - Deep sleep timeout event
-            static void OnDeepSleepTimeout(const JSONRPC& _module_, const Core::JSON::DecSInt32& wakeupTimeout)
+            // Event: 'onThermalModeChanged' - Thermal Mode changed event
+            static void OnThermalModeChanged(const JSONRPC& _module_,
+                     const Core::JSON::EnumType<Exchange::IPowerManager::ThermalTemperature>& currentThermalLevel, const Core::JSON::EnumType<Exchange::IPowerManager::ThermalTemperature>& newThermalLevel, const Core::JSON::Float& currentTemperature)
             {
-                JsonData::PowerManager::OnDeepSleepTimeoutParamsData _params_;
-                _params_.WakeupTimeout = wakeupTimeout;
+                JsonData::PowerManager::OnThermalModeChangedParamsData _params_;
+                _params_.CurrentThermalLevel = currentThermalLevel;
+                _params_.NewThermalLevel = newThermalLevel;
+                _params_.CurrentTemperature = currentTemperature;
 
-                OnDeepSleepTimeout(_module_, _params_);
+                OnThermalModeChanged(_module_, _params_);
             }
 
-            // Event: 'onDeepSleepTimeout' - Deep sleep timeout event
-            static void OnDeepSleepTimeout(const JSONRPC& _module_, const int32_t& wakeupTimeout)
+            // Event: 'onThermalModeChanged' - Thermal Mode changed event
+            static void OnThermalModeChanged(const JSONRPC& _module_, const Exchange::IPowerManager::ThermalTemperature& currentThermalLevel,
+                     const Exchange::IPowerManager::ThermalTemperature& newThermalLevel, const float& currentTemperature)
             {
-                JsonData::PowerManager::OnDeepSleepTimeoutParamsData _params_;
-                _params_.WakeupTimeout = wakeupTimeout;
+                JsonData::PowerManager::OnThermalModeChangedParamsData _params_;
+                _params_.CurrentThermalLevel = currentThermalLevel;
+                _params_.NewThermalLevel = newThermalLevel;
+                _params_.CurrentTemperature = currentTemperature;
 
-                OnDeepSleepTimeout(_module_, _params_);
-            }
-
-            // Event: 'onNetworkStandbyModeChanged' - Network Standby Mode changed event - only on XIone
-            static void OnNetworkStandbyModeChanged(const JSONRPC& _module_, const JsonData::PowerManager::OnNetworkStandbyModeChangedParamsData& params)
-            {
-                _module_.Notify(_T("onNetworkStandbyModeChanged"), params);
-            }
-
-            // Event: 'onNetworkStandbyModeChanged' - Network Standby Mode changed event - only on XIone
-            static void OnNetworkStandbyModeChanged(const JSONRPC& _module_, const Core::JSON::Boolean& enabled)
-            {
-                JsonData::PowerManager::OnNetworkStandbyModeChangedParamsData _params_;
-                _params_.Enabled = enabled;
-
-                OnNetworkStandbyModeChanged(_module_, _params_);
-            }
-
-            // Event: 'onNetworkStandbyModeChanged' - Network Standby Mode changed event - only on XIone
-            static void OnNetworkStandbyModeChanged(const JSONRPC& _module_, const bool& enabled)
-            {
-                JsonData::PowerManager::OnNetworkStandbyModeChangedParamsData _params_;
-                _params_.Enabled = enabled;
-
-                OnNetworkStandbyModeChanged(_module_, _params_);
+                OnThermalModeChanged(_module_, _params_);
             }
 
             // Event: 'onRebootBegin' - Reboot begin event
@@ -489,34 +471,28 @@ namespace Exchange {
                 OnPowerModePreChange(_module_, _params_);
             }
 
-            // Event: 'onThermalModeChanged' - Thermal Mode changed event
-            static void OnThermalModeChanged(const JSONRPC& _module_, const JsonData::PowerManager::OnThermalModeChangedParamsData& params)
+            // Event: 'onDeepSleepTimeout' - Deep sleep timeout event
+            static void OnDeepSleepTimeout(const JSONRPC& _module_, const JsonData::PowerManager::OnDeepSleepTimeoutParamsData& params)
             {
-                _module_.Notify(_T("onThermalModeChanged"), params);
+                _module_.Notify(_T("onDeepSleepTimeout"), params);
             }
 
-            // Event: 'onThermalModeChanged' - Thermal Mode changed event
-            static void OnThermalModeChanged(const JSONRPC& _module_,
-                     const Core::JSON::EnumType<Exchange::IPowerManager::ThermalTemperature>& currentThermalLevel, const Core::JSON::EnumType<Exchange::IPowerManager::ThermalTemperature>& newThermalLevel, const Core::JSON::Float& currentTemperature)
+            // Event: 'onDeepSleepTimeout' - Deep sleep timeout event
+            static void OnDeepSleepTimeout(const JSONRPC& _module_, const Core::JSON::DecSInt32& wakeupTimeout)
             {
-                JsonData::PowerManager::OnThermalModeChangedParamsData _params_;
-                _params_.CurrentThermalLevel = currentThermalLevel;
-                _params_.NewThermalLevel = newThermalLevel;
-                _params_.CurrentTemperature = currentTemperature;
+                JsonData::PowerManager::OnDeepSleepTimeoutParamsData _params_;
+                _params_.WakeupTimeout = wakeupTimeout;
 
-                OnThermalModeChanged(_module_, _params_);
+                OnDeepSleepTimeout(_module_, _params_);
             }
 
-            // Event: 'onThermalModeChanged' - Thermal Mode changed event
-            static void OnThermalModeChanged(const JSONRPC& _module_, const Exchange::IPowerManager::ThermalTemperature& currentThermalLevel,
-                     const Exchange::IPowerManager::ThermalTemperature& newThermalLevel, const float& currentTemperature)
+            // Event: 'onDeepSleepTimeout' - Deep sleep timeout event
+            static void OnDeepSleepTimeout(const JSONRPC& _module_, const int32_t& wakeupTimeout)
             {
-                JsonData::PowerManager::OnThermalModeChangedParamsData _params_;
-                _params_.CurrentThermalLevel = currentThermalLevel;
-                _params_.NewThermalLevel = newThermalLevel;
-                _params_.CurrentTemperature = currentTemperature;
+                JsonData::PowerManager::OnDeepSleepTimeoutParamsData _params_;
+                _params_.WakeupTimeout = wakeupTimeout;
 
-                OnThermalModeChanged(_module_, _params_);
+                OnDeepSleepTimeout(_module_, _params_);
             }
 
             // Event: 'onPowerModeChanged' - Power mode changed
@@ -545,6 +521,30 @@ namespace Exchange {
                 _params_.NewState = newState;
 
                 OnPowerModeChanged(_module_, _params_);
+            }
+
+            // Event: 'onNetworkStandbyModeChanged' - Network Standby Mode changed event - only on XIone
+            static void OnNetworkStandbyModeChanged(const JSONRPC& _module_, const JsonData::PowerManager::OnNetworkStandbyModeChangedParamsData& params)
+            {
+                _module_.Notify(_T("onNetworkStandbyModeChanged"), params);
+            }
+
+            // Event: 'onNetworkStandbyModeChanged' - Network Standby Mode changed event - only on XIone
+            static void OnNetworkStandbyModeChanged(const JSONRPC& _module_, const Core::JSON::Boolean& enabled)
+            {
+                JsonData::PowerManager::OnNetworkStandbyModeChangedParamsData _params_;
+                _params_.Enabled = enabled;
+
+                OnNetworkStandbyModeChanged(_module_, _params_);
+            }
+
+            // Event: 'onNetworkStandbyModeChanged' - Network Standby Mode changed event - only on XIone
+            static void OnNetworkStandbyModeChanged(const JSONRPC& _module_, const bool& enabled)
+            {
+                JsonData::PowerManager::OnNetworkStandbyModeChangedParamsData _params_;
+                _params_.Enabled = enabled;
+
+                OnNetworkStandbyModeChanged(_module_, _params_);
             }
 
         } // namespace Event

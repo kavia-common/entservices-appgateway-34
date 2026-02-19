@@ -461,6 +461,45 @@ namespace Exchange {
 
         namespace Event {
 
+            // Event: 'videoStreamInfoUpdate' - Triggered whenever there is an update in HDMI/Composite Input video stream info
+            static void VideoStreamInfoUpdate(const JSONRPC& _module_, const JsonData::AVInput::VideoStreamInfoUpdateParamsData& params)
+            {
+                _module_.Notify(_T("videoStreamInfoUpdate"), params);
+            }
+
+            // Event: 'videoStreamInfoUpdate' - Triggered whenever there is an update in HDMI/Composite Input video stream info
+            static void VideoStreamInfoUpdate(const JSONRPC& _module_, const Core::JSON::DecSInt32& id, const Core::JSON::String& locator,
+                     const Core::JSON::DecSInt32& width, const Core::JSON::DecSInt32& height, const Core::JSON::Boolean& progressive, const Core::JSON::DecSInt32& frameRateN,
+                     const Core::JSON::DecSInt32& frameRateD)
+            {
+                JsonData::AVInput::VideoStreamInfoUpdateParamsData _params_;
+                _params_.Id = id;
+                _params_.Locator = locator;
+                _params_.Width = width;
+                _params_.Height = height;
+                _params_.Progressive = progressive;
+                _params_.FrameRateN = frameRateN;
+                _params_.FrameRateD = frameRateD;
+
+                VideoStreamInfoUpdate(_module_, _params_);
+            }
+
+            // Event: 'videoStreamInfoUpdate' - Triggered whenever there is an update in HDMI/Composite Input video stream info
+            static void VideoStreamInfoUpdate(const JSONRPC& _module_, const int32_t& id, const string& locator, const int32_t& width, const int32_t& height,
+                     const bool& progressive, const int32_t& frameRateN, const int32_t& frameRateD)
+            {
+                JsonData::AVInput::VideoStreamInfoUpdateParamsData _params_;
+                _params_.Id = id;
+                _params_.Locator = locator;
+                _params_.Width = width;
+                _params_.Height = height;
+                _params_.Progressive = progressive;
+                _params_.FrameRateN = frameRateN;
+                _params_.FrameRateD = frameRateD;
+
+                VideoStreamInfoUpdate(_module_, _params_);
+            }
+
             // Event: 'gameFeatureStatusUpdate' - Triggered whenever game feature(ALLM) status changes for an HDMI Input
             static void GameFeatureStatusUpdate(const JSONRPC& _module_, const JsonData::AVInput::GameFeatureStatusUpdateParamsData& params)
             {
@@ -574,45 +613,6 @@ namespace Exchange {
                 _params_.Plane = plane;
 
                 OnInputStatusChanged(_module_, _params_);
-            }
-
-            // Event: 'videoStreamInfoUpdate' - Triggered whenever there is an update in HDMI/Composite Input video stream info
-            static void VideoStreamInfoUpdate(const JSONRPC& _module_, const JsonData::AVInput::VideoStreamInfoUpdateParamsData& params)
-            {
-                _module_.Notify(_T("videoStreamInfoUpdate"), params);
-            }
-
-            // Event: 'videoStreamInfoUpdate' - Triggered whenever there is an update in HDMI/Composite Input video stream info
-            static void VideoStreamInfoUpdate(const JSONRPC& _module_, const Core::JSON::DecSInt32& id, const Core::JSON::String& locator,
-                     const Core::JSON::DecSInt32& width, const Core::JSON::DecSInt32& height, const Core::JSON::Boolean& progressive, const Core::JSON::DecSInt32& frameRateN,
-                     const Core::JSON::DecSInt32& frameRateD)
-            {
-                JsonData::AVInput::VideoStreamInfoUpdateParamsData _params_;
-                _params_.Id = id;
-                _params_.Locator = locator;
-                _params_.Width = width;
-                _params_.Height = height;
-                _params_.Progressive = progressive;
-                _params_.FrameRateN = frameRateN;
-                _params_.FrameRateD = frameRateD;
-
-                VideoStreamInfoUpdate(_module_, _params_);
-            }
-
-            // Event: 'videoStreamInfoUpdate' - Triggered whenever there is an update in HDMI/Composite Input video stream info
-            static void VideoStreamInfoUpdate(const JSONRPC& _module_, const int32_t& id, const string& locator, const int32_t& width, const int32_t& height,
-                     const bool& progressive, const int32_t& frameRateN, const int32_t& frameRateD)
-            {
-                JsonData::AVInput::VideoStreamInfoUpdateParamsData _params_;
-                _params_.Id = id;
-                _params_.Locator = locator;
-                _params_.Width = width;
-                _params_.Height = height;
-                _params_.Progressive = progressive;
-                _params_.FrameRateN = frameRateN;
-                _params_.FrameRateD = frameRateD;
-
-                VideoStreamInfoUpdate(_module_, _params_);
             }
 
         } // namespace Event

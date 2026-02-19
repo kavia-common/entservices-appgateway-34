@@ -697,12 +697,9 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
     EXPECT_EQ(Core::ERROR_NONE, impl.Resolve(ctx, origin, "comrpc.method", params, resolution));
     EXPECT_THAT(resolution, ::testing::HasSubstr("\"ok\":true"));
 
-    // The test's QueryInterfaceByCallsign shim does an extra AddRef() to emulate COM behavior on return.
-    // Production code calls Release() once, so we must release:
-    //  - the original reference from `new` (refcount 1)
-    //  - the extra reference from the shim (refcount +1)
-    // so the mock is destroyed and gMock can verify expectations (prevents leak at exit).
-    handler->Release();
-    handler->Release();
+    // Lifetime note:
+    // `QueryInterfaceByCallsign` emulation AddRef()'s the handler before returning it.
+    // AppGatewayImplementation is responsible for calling Release() on the interface it queried.
+    // This test must not manually Release() here, as doing so can race/double-release and cause UAF.
 }
 
