@@ -751,24 +751,41 @@ cmake_configure_build_noinstall \
   "${APPGATEWAY_BUILD_DIR}" \
   "${L1TESTS_ONLY_CMAKE_ARGS[@]}"
 
-# Stage the AppGateway plugin shared library built as part of the L1Tests-only build.
-PLUGIN_SO=""
-if compgen -G "${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*" >/dev/null; then
-  PLUGIN_SO="$(ls -1 "${APPGATEWAY_BUILD_DIR}/AppGateway/"*.so* 2>/dev/null | head -n 1)"
-fi
-
-if [[ -z "${PLUGIN_SO}" || ! -f "${PLUGIN_SO}" ]]; then
-  err "Step 23 did not produce AppGateway plugin .so at expected location."
-  err "Checked: ${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*"
-  exit 1
-fi
-
+# Stage required plugin shared libraries built as part of the L1Tests-only build.
+#
+# Important: We do not run any `cmake --install` for entservices-appgateway here,
+# because installs attempt to write under /etc in some environments. Instead, we
+# copy the built .so artifacts into the local install prefix plugin directory
+# that the test runner uses via LD_LIBRARY_PATH.
 LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
 mkdir -p "${LOCAL_PLUGIN_DIR}"
-cp -f "${PLUGIN_SO}" "${LOCAL_PLUGIN_DIR}/"
 
-log "[OK] AppGateway plugin staged for L1 tests at: ${LOCAL_PLUGIN_DIR}/$(basename "${PLUGIN_SO}")"
-ls -la "${LOCAL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
+stage_plugin_so_from_dir() {
+  local src_glob="$1"
+  local desc="$2"
+
+  local so_path=""
+  if compgen -G ${src_glob} >/dev/null; then
+    so_path="$(ls -1 ${src_glob} 2>/dev/null | head -n 1)"
+  fi
+
+  if [[ -z "${so_path}" || ! -f "${so_path}" ]]; then
+    err "Step 23 did not produce ${desc} .so at expected location."
+    err "Checked: ${src_glob}"
+    exit 1
+  fi
+
+  cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/"
+  log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/$(basename "${so_path}")"
+}
+
+# AppGateway plugin
+stage_plugin_so_from_dir "${APPGATEWAY_BUILD_DIR}/AppGateway/"'*.so*' "AppGateway plugin"
+
+# L1TestsIN plugin module (built from Tests/L1Tests add_library(${MODULE_NAME} ...))
+stage_plugin_so_from_dir "${APPGATEWAY_BUILD_DIR}/"'*.so*' "L1TestsIN test module"
+
+ls -la "${LOCAL_PLUGIN_DIR}/"*.so* 2>/dev/null || true
 
 # The executable is expected in this build tree:
 #   <build>/AppGatewayL1Test
