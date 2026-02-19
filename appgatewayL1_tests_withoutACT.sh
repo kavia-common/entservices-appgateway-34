@@ -759,6 +759,16 @@ cmake_configure_build_noinstall \
   "${APPGATEWAY_BUILD_DIR}" \
   "${L1TESTS_ONLY_CMAKE_ARGS[@]}"
 
+# Extra safety: explicitly build the plugin/shared-object targets that the runtime needs.
+# Depending on the generator and dependency graph, building only the default target may
+# build the test binary but not all plugin .so outputs.
+log "Step 23: Ensuring required .so artifacts are built (AppGateway + L1TestsIN)"
+cmake --build "${APPGATEWAY_BUILD_DIR}" --target AppGatewayL1Test -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+# Best-effort: L1TestsIN may be skipped if no legacy sources are enabled; AppGateway plugin should exist.
+cmake --build "${APPGATEWAY_BUILD_DIR}" --target "WPEFrameworkAppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+cmake --build "${APPGATEWAY_BUILD_DIR}" --target "L1TestsIN" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+
 # Stage required plugin shared libraries built as part of the L1Tests-only build.
 # This is critical: runtime loads the AppGateway plugin .so and the L1TestsIN module .so.
 # In addition, AppGateway is typically linked/loaded with sibling plugin libs from this repo;

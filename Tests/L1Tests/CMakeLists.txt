@@ -30,6 +30,22 @@ set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
 set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
+# -----------------------------------------------------------------------------
+# Thunder interface selection
+#
+# The L1Tests build (and especially the mocks in Tests/mocks) must match the
+# WPEFramework headers available via CMAKE_PREFIX_PATH / install/usr/include.
+#
+# In Thunder R4 the PluginHost::IShell interface changed (method signatures and
+# return types), and ServiceMock has an #ifdef USE_THUNDER_R4 split accordingly.
+# If USE_THUNDER_R4 is not propagated as a compile definition, compilation fails
+# with "marked override but does not override".
+# -----------------------------------------------------------------------------
+option(USE_THUNDER_R4 "Build L1 tests against Thunder (WPEFramework) R4 headers" OFF)
+
+# Keep an easy-to-consume variable for consistent use below.
+set(_L1TESTS_USE_THUNDER_R4 ${USE_THUNDER_R4})
+
 # ---------------------------------------------------------------------------
 # L1Tests-only build support
 #
@@ -207,6 +223,10 @@ if(TEST_SRC)
 
     target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
 
+    if(_L1TESTS_USE_THUNDER_R4)
+        target_compile_definitions(${MODULE_NAME} PRIVATE USE_THUNDER_R4)
+    endif()
+
     install(TARGETS ${MODULE_NAME} DESTINATION lib)
 else()
     message(STATUS "Skipping ${MODULE_NAME} (no legacy L1 test sources enabled)")
@@ -264,6 +284,10 @@ if(PLUGIN_APPGATEWAY)
     )
 
     target_compile_definitions(AppGatewayL1Test PRIVATE UNIT_TEST)
+
+    if(_L1TESTS_USE_THUNDER_R4)
+        target_compile_definitions(AppGatewayL1Test PRIVATE USE_THUNDER_R4)
+    endif()
 
     # Install to the location the script checks first: install/usr/bin/AppGatewayL1Test
     install(TARGETS AppGatewayL1Test RUNTIME DESTINATION bin)
