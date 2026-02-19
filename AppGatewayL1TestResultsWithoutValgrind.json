@@ -1,10 +1,10 @@
 {
   "tests": 9,
-  "failures": 4,
+  "failures": 2,
   "disabled": 0,
   "errors": 0,
-  "timestamp": "2026-02-19T09:03:25Z",
-  "time": "0.016s",
+  "timestamp": "2026-02-19T09:07:55Z",
+  "time": "0.014s",
   "name": "AllTests",
   "testsuites": [
     {
@@ -13,56 +13,56 @@
       "failures": 0,
       "disabled": 0,
       "errors": 0,
-      "timestamp": "2026-02-19T09:03:25Z",
+      "timestamp": "2026-02-19T09:07:55Z",
       "time": "0.001s",
       "testsuite": [
         {
           "name": "Resolver_LoadConfig_MissingFile_ReturnsFalse",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 148,
+          "line": 167,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
           "name": "Resolver_LoadConfig_InvalidJson_ReturnsFalse",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 156,
+          "line": 175,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
           "name": "Resolver_LoadConfig_MissingResolutionsObject_ReturnsFalse",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 166,
+          "line": 185,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
           "name": "Resolver_LoadConfig_LowercasesKeysAndOverrides",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 178,
+          "line": 197,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
           "name": "Resolver_LoadConfig_EventAndComRpcFlags",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 215,
+          "line": 234,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         }
@@ -71,36 +71,28 @@
     {
       "name": "AppGatewayImplementationTest",
       "tests": 4,
-      "failures": 4,
+      "failures": 2,
       "disabled": 0,
       "errors": 0,
-      "timestamp": "2026-02-19T09:03:25Z",
-      "time": "0.014s",
+      "timestamp": "2026-02-19T09:07:55Z",
+      "time": "0.013s",
       "testsuite": [
         {
           "name": "AppGateway_Event_PreProcessEvent_MissingParams_BadRequest",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 249,
+          "line": 268,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
-          "time": "0.004s",
+          "timestamp": "2026-02-19T09:07:55Z",
+          "time": "0.003s",
           "classname": "AppGatewayImplementationTest",
           "failures": [
             {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:341\nValue of: resolution\nExpected: has substring \"Event methods require parameters\"\n  Actual: \"{\\\"code\\\":-32602,\\\"message\\\":\\\"Missing required boolean 'listen' parameter\\\"}\"\n",
+              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:361\nValue of: resolution\nExpected: has substring \"Event methods require parameters\"\n  Actual: \"{\\\"code\\\":-32602,\\\"message\\\":\\\"Missing required boolean 'listen' parameter\\\"}\"\n",
               "type": ""
             },
             {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f39aa7b4bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
+              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f4f21834bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
               "type": ""
             }
           ]
@@ -108,23 +100,15 @@
         {
           "name": "AppGateway_Event_PreProcessEvent_MissingListen_BadRequest",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 344,
+          "line": 364,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0.003s",
           "classname": "AppGatewayImplementationTest",
           "failures": [
             {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f39aa7b4bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
+              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f4f21834bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
               "type": ""
             }
           ]
@@ -132,42 +116,22 @@
         {
           "name": "AppGateway_ComRpc_RequestHandlerMissing_NotAvailable",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 433,
+          "line": 454,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0.003s",
-          "classname": "AppGatewayImplementationTest",
-          "failures": [
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
-              "type": ""
-            }
-          ]
+          "classname": "AppGatewayImplementationTest"
         },
         {
           "name": "AppGateway_ComRpc_AdditionalContext_WrapsParamsWith_additionalContext",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 532,
+          "line": 554,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:03:25Z",
+          "timestamp": "2026-02-19T09:07:55Z",
           "time": "0.003s",
-          "classname": "AppGatewayImplementationTest",
-          "failures": [
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
-              "type": ""
-            }
-          ]
+          "classname": "AppGatewayImplementationTest"
         }
       ]
     }

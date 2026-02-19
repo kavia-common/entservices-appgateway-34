@@ -354,10 +354,14 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingParam
     PathsIterator it({ cfg });
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&it));
 
-    // Current implementation returns a distinct message when params are missing/invalid JSON.
+    // Production behavior: PreProcessEvent uses ErrorUtils::CustomBadRequest("Event methods require parameters", ...)
+    // and returns Core::ERROR_BAD_REQUEST.
     std::string resolution;
     const auto ctx = MakeContext();
     EXPECT_EQ(Core::ERROR_BAD_REQUEST, impl.Resolve(ctx, "gateway", "event.method", "" /* params missing */, resolution));
+
+    // ErrorUtils payload is JSON; assert on key substrings that remain stable.
+    EXPECT_THAT(resolution, ::testing::HasSubstr("BadRequest"));
     EXPECT_THAT(resolution, ::testing::HasSubstr("Event methods require parameters"));
 }
 
@@ -448,6 +452,9 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
     const auto ctx = MakeContext();
     EXPECT_EQ(Core::ERROR_BAD_REQUEST,
         impl.Resolve(ctx, "gateway", "event.method", "{}" /* no listen field */, resolution));
+
+    // Production behavior: ErrorUtils::CustomBadRequest("Missing required boolean 'listen' parameter", ...)
+    EXPECT_THAT(resolution, ::testing::HasSubstr("BadRequest"));
     EXPECT_THAT(resolution, ::testing::HasSubstr("Missing required boolean 'listen' parameter"));
 }
 
@@ -684,7 +691,8 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
     EXPECT_EQ(Core::ERROR_NONE, impl.Resolve(ctx, origin, "comrpc.method", params, resolution));
     EXPECT_THAT(resolution, ::testing::HasSubstr("\"ok\":true"));
 
-    // NOTE: Do not manually delete the handler. It is passed to production code as a COM interface pointer,
-    // and its lifetime should be managed via AddRef/Release. Manual deletion risks double-free.
+    // The test's QueryInterfaceByCallsign shim does an extra AddRef() to emulate COM behavior on return.
+    // Production code calls Release() once, so we must release our original reference as well to avoid a gMock leak.
+    handler->Release();
 }
 
