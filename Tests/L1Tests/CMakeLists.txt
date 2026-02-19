@@ -18,12 +18,13 @@
 cmake_minimum_required(VERSION 3.8)
 
 # ---------------------------------------------------------------------------
-# Package discovery shim for L1Tests-only builds
+# Package discovery shims for L1Tests-only builds
 #
 # When configuring only Tests/L1Tests, plugin subdirectories (e.g. AppGateway)
-# can call find_package(Plugins) (empty NAMESPACE). Thunder's canonical package
-# name is WPEFrameworkPlugins, so we provide a local "Plugins" config shim
-# under Tests/L1Tests/cmake and ensure CMake can find it.
+# can call find_package(Plugins) / find_package(Definitions) when NAMESPACE is
+# empty. Thunder's canonical package names are WPEFrameworkPlugins and
+# WPEFrameworkDefinitions, so we provide local compatibility shims under
+# Tests/L1Tests/cmake and ensure CMake can find them.
 # ---------------------------------------------------------------------------
 list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
 
@@ -261,7 +262,11 @@ if(TEST_SRC)
         ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
     )
 
-    target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
+    target_compile_definitions(${MODULE_NAME} PRIVATE
+        UNIT_TEST
+        # Avoid pulling in SecurityTokenUtil.h / SecurityAgent headers in CI L1 builds.
+        DISABLE_SECURITY_TOKEN
+    )
 
     if(_L1TESTS_USE_THUNDER_R4)
         target_compile_definitions(${MODULE_NAME} PRIVATE USE_THUNDER_R4)
@@ -310,6 +315,9 @@ if(PLUGIN_APPGATEWAY)
         ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
     )
 
+    # AppGateway plugin library is staged/installed into:
+    #   <prefix>/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
+    # Ensure the linker can resolve -lWPEFrameworkAppGateway in L1Tests-only builds.
     target_link_directories(AppGatewayL1Test PRIVATE
         ${CMAKE_INSTALL_PREFIX}/lib
         ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
@@ -323,7 +331,11 @@ if(PLUGIN_APPGATEWAY)
         Threads::Threads
     )
 
-    target_compile_definitions(AppGatewayL1Test PRIVATE UNIT_TEST)
+    target_compile_definitions(AppGatewayL1Test PRIVATE
+        UNIT_TEST
+        # Avoid pulling in SecurityTokenUtil.h / SecurityAgent headers in CI L1 builds.
+        DISABLE_SECURITY_TOKEN
+    )
 
     if(_L1TESTS_USE_THUNDER_R4)
         target_compile_definitions(AppGatewayL1Test PRIVATE USE_THUNDER_R4)

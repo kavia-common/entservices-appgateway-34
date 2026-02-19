@@ -731,6 +731,9 @@ L1TESTS_ONLY_CMAKE_ARGS=(
   # ONLY Tests/L1Tests (no full install of entservices-appgateway).
   -DWPEFrameworkPlugins_DIR="${INSTALL_USR}/lib/cmake/WPEFrameworkPlugins"
 
+  # Avoid SecurityAgent headers (SecurityTokenUtil.h) during L1 test builds.
+  -DDISABLE_SECURITY_TOKEN=ON
+
   # Authoritative fix: compile tests/mocks against Thunder R4 interface headers so
   # MOCK_METHOD(..., override) matches the actual virtual methods.
   -DUSE_THUNDER_R4=ON
