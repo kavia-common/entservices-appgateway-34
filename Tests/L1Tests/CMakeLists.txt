@@ -31,7 +31,19 @@ find_package(${NAMESPACE}Plugins REQUIRED)
 # -----------------------------------------------------------------------------
 function(link_against_installed_appgateway_plugin TARGET_NAME)
     set(APPGATEWAY_PLUGIN_DIR_SYSTEM "/usr/lib/wpeframework/plugins")
-    set(APPGATEWAY_PLUGIN_DIR_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins")
+
+    # Prefer the plugin directory configured by the top-level build.
+    # WPEFRAMEWORK_PLUGIN_INSTALL_DIR is relative to CMAKE_INSTALL_PREFIX unless absolute.
+    if (DEFINED WPEFRAMEWORK_PLUGIN_INSTALL_DIR)
+        if (IS_ABSOLUTE "${WPEFRAMEWORK_PLUGIN_INSTALL_DIR}")
+            set(APPGATEWAY_PLUGIN_DIR_PREFIX "${WPEFRAMEWORK_PLUGIN_INSTALL_DIR}")
+        else()
+            set(APPGATEWAY_PLUGIN_DIR_PREFIX "${CMAKE_INSTALL_PREFIX}/${WPEFRAMEWORK_PLUGIN_INSTALL_DIR}")
+        endif()
+    else()
+        # Fallback for older configurations.
+        set(APPGATEWAY_PLUGIN_DIR_PREFIX "${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins")
+    endif()
 
     file(GLOB APPGATEWAY_PLUGIN_SO_SYSTEM
         "${APPGATEWAY_PLUGIN_DIR_SYSTEM}/*AppGateway*.so"

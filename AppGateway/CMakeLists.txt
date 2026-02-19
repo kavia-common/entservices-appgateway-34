@@ -83,7 +83,7 @@ target_link_libraries(${MODULE_NAME}
 target_link_options(${MODULE_NAME} PRIVATE -Wl,-z,defs)
 
 install(TARGETS ${MODULE_NAME}
-        DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
+        DESTINATION ${WPEFRAMEWORK_PLUGIN_INSTALL_DIR})
 
 install(FILES ${CMAKE_CURRENT_SOURCE_DIR}/resolutions/resolution.base.json
         DESTINATION "/etc/app-gateway/")

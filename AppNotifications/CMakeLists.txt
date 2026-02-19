@@ -63,6 +63,6 @@ target_link_options(${MODULE_NAME} PRIVATE -Wl,-z,defs)
 add_compile_options(-Wall -Werror)
 
 install(TARGETS ${MODULE_NAME}
-        DESTINATION lib/${STORAGE_DIRECTORY}/plugins)
+        DESTINATION ${WPEFRAMEWORK_PLUGIN_INSTALL_DIR})
 
 write_config(${PLUGIN_NAME})
