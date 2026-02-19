@@ -1,10 +1,10 @@
 {
   "tests": 9,
-  "failures": 2,
+  "failures": 0,
   "disabled": 0,
   "errors": 0,
-  "timestamp": "2026-02-19T09:10:03Z",
-  "time": "0.022s",
+  "timestamp": "2026-02-19T12:21:31Z",
+  "time": "0.015s",
   "name": "AllTests",
   "testsuites": [
     {
@@ -13,7 +13,7 @@
       "failures": 0,
       "disabled": 0,
       "errors": 0,
-      "timestamp": "2026-02-19T09:10:03Z",
+      "timestamp": "2026-02-19T12:21:31Z",
       "time": "0.001s",
       "testsuite": [
         {
@@ -22,7 +22,7 @@
           "line": 167,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:03Z",
+          "timestamp": "2026-02-19T12:21:31Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
@@ -32,7 +32,7 @@
           "line": 175,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:03Z",
+          "timestamp": "2026-02-19T12:21:31Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
@@ -42,7 +42,7 @@
           "line": 185,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:03Z",
+          "timestamp": "2026-02-19T12:21:31Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
@@ -52,7 +52,7 @@
           "line": 197,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:03Z",
+          "timestamp": "2026-02-19T12:21:31Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
@@ -62,7 +62,7 @@
           "line": 234,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:03Z",
+          "timestamp": "2026-02-19T12:21:31Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         }
@@ -71,11 +71,11 @@
     {
       "name": "AppGatewayImplementationTest",
       "tests": 4,
-      "failures": 2,
+      "failures": 0,
       "disabled": 0,
       "errors": 0,
-      "timestamp": "2026-02-19T09:10:03Z",
-      "time": "0.021s",
+      "timestamp": "2026-02-19T12:21:31Z",
+      "time": "0.014s",
       "testsuite": [
         {
           "name": "AppGateway_Event_PreProcessEvent_MissingParams_BadRequest",
@@ -83,62 +83,38 @@
           "line": 268,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:03Z",
+          "timestamp": "2026-02-19T12:21:31Z",
           "time": "0.004s",
-          "classname": "AppGatewayImplementationTest",
-          "failures": [
-            {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:364\nValue of: resolution\nExpected: has substring \"BadRequest\"\n  Actual: \"{\\\"code\\\":-32602,\\\"message\\\":\\\"Missing required boolean 'listen' parameter\\\"}\"\n",
-              "type": ""
-            },
-            {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:365\nValue of: resolution\nExpected: has substring \"Event methods require parameters\"\n  Actual: \"{\\\"code\\\":-32602,\\\"message\\\":\\\"Missing required boolean 'listen' parameter\\\"}\"\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f430cff3bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
-              "type": ""
-            }
-          ]
+          "classname": "AppGatewayImplementationTest"
         },
         {
           "name": "AppGateway_Event_PreProcessEvent_MissingListen_BadRequest",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 368,
+          "line": 373,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:04Z",
-          "time": "0.005s",
-          "classname": "AppGatewayImplementationTest",
-          "failures": [
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f430cff3bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
-              "type": ""
-            },
-            {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:457\nValue of: resolution\nExpected: has substring \"BadRequest\"\n  Actual: \"{\\\"code\\\":-32602,\\\"message\\\":\\\"Missing required boolean 'listen' parameter\\\"}\"\n",
-              "type": ""
-            }
-          ]
+          "timestamp": "2026-02-19T12:21:31Z",
+          "time": "0.003s",
+          "classname": "AppGatewayImplementationTest"
         },
         {
           "name": "AppGateway_ComRpc_RequestHandlerMissing_NotAvailable",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 461,
+          "line": 474,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:04Z",
-          "time": "0.006s",
+          "timestamp": "2026-02-19T12:21:31Z",
+          "time": "0.003s",
           "classname": "AppGatewayImplementationTest"
         },
         {
           "name": "AppGateway_ComRpc_AdditionalContext_WrapsParamsWith_additionalContext",
           "file": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp",
-          "line": 561,
+          "line": 574,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T09:10:04Z",
-          "time": "0.005s",
+          "timestamp": "2026-02-19T12:21:31Z",
+          "time": "0.003s",
           "classname": "AppGatewayImplementationTest"
         }
       ]
