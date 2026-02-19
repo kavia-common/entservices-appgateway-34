@@ -2,18 +2,23 @@
 set -euo pipefail
 
 # -----------------------------------------------------------------------------
-# appgateway_L1_tests_withoutACT.sh
+# appgatewayL1_tests_withoutACT.sh
 #
 # Purpose:
-#   Run the AppGateway L1 workflow steps while keeping repeated executions fast by
-#   reusing already-cloned repos and already-built/install artifacts when present.
+#   Build prerequisites (Thunder/ThunderTools/entservices-apis/googletest),
+#   build entservices-appgateway plugins, build and run AppGateway L1 tests,
+#   and generate HTML coverage for AppGateway sources.
 #
-# Required behavior for this task:
-#   - Step 23 MUST pass -DPLUGIN_APPGATEWAY=ON so AppGateway plugin .so is built.
-#   - Step 23 MUST log the FULL CMake configure command (including generator).
-#   - The AppGateway plugin shared object MUST be installed/copied to:
-#       /usr/lib/wpeframework/plugins
-#   - Tests must link against the installed plugin (handled in Tests/L1Tests CMake).
+# Key requirements (authoritative):
+#   - Compile AppGateway, AppGatewayCommon, AppNotifications, but L1 testing is
+#     currently only for AppGateway.
+#   - Ensure coverage flags are applied while compiling/linking, so .gcno/.gcda
+#     are generated.
+#   - Build and execute the L1 test binary from:
+#       Tests/L1Tests/tests/test_AppGateway.cpp
+#   - Generate HTML coverage report for AppGateway plugin sources.
+#   - Fix install-time failure creating /etc/app-gateway (no root in CI):
+#       avoid running install steps that attempt to write to /etc.
 # -----------------------------------------------------------------------------
 
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
@@ -84,9 +89,10 @@ Usage: $(basename "$0") [--clean] [--rebuild] [--reclone] [--help]
   --help      Show this help.
 
 Environment:
-  WORKSPACE_ROOT   Defaults to /home/kavia/workspace/code-generation
-  INSTALL_ROOT     Defaults to \$WORKSPACE_ROOT/install
-  BUILD_ROOT       Defaults to /tmp/entservices-appgateway-build
+  WORKSPACE_ROOT           Defaults to /home/kavia/workspace/code-generation
+  INSTALL_ROOT             Defaults to \$REPO_DIR/install
+  BUILD_ROOT               Defaults to /tmp/entservices-appgateway-build
+  COVERAGE_TOOLCHAIN_FILE  Optional CMake toolchain file for coverage (if present)
 EOF
 }
 
@@ -304,7 +310,6 @@ cmake_configure_build_install() {
   fi
 
   # Always specify the generator explicitly so logs and configuration are deterministic.
-  # This also ensures "full configure command (including generator)" requirements are met.
   local -a gen_args=()
   if have_cmd ninja; then
     gen_args=(-G Ninja)
@@ -328,6 +333,42 @@ cmake_configure_build_install() {
   cmake --install "${build_dir}"
 }
 
+cmake_configure_build_noinstall() {
+  # Like cmake_configure_build_install, but does NOT run cmake --install.
+  # Used to avoid writing to /etc during install in CI/non-root environments.
+  local component_name="$1"
+  local src_dir="$2"
+  local build_dir="$3"
+  shift 3
+  local -a extra_args=("$@")
+
+  if [[ ! -d "${src_dir}" ]]; then
+    err "CMake source directory not found: ${src_dir}"
+    return 1
+  fi
+
+  mkdir -p "${build_dir}"
+
+  # Always specify generator explicitly.
+  local -a gen_args=()
+  if have_cmd ninja; then
+    gen_args=(-G Ninja)
+  else
+    gen_args=(-G "Unix Makefiles")
+  fi
+
+  log "${component_name}: CMake configure (NO-INSTALL): cmake ${gen_args[*]} -S ${src_dir} -B ${build_dir} (verbose; log: ${build_dir}/configure_verbose.log)"
+  cmake "${gen_args[@]}" -S "${src_dir}" -B "${build_dir}" \
+    -DCMAKE_BUILD_TYPE=Debug \
+    -DCMAKE_VERBOSE_MAKEFILE=ON \
+    -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE \
+    --log-level=VERBOSE \
+    "${extra_args[@]}" 2>&1 | tee "${build_dir}/configure_verbose.log"
+
+  log "${component_name}: CMake build (NO-INSTALL): ${build_dir}"
+  cmake --build "${build_dir}" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
+}
+
 # -----------------------------------------------------------------------------
 # Workspace layout
 # -----------------------------------------------------------------------------
@@ -344,9 +385,6 @@ GTEST_DIR="${REPO_DIR}/googletest"
 
 PATCHES_DIR="${REPO_DIR}/Tests/patches"
 
-# Default install prefix requested for this workflow:
-#   -DCMAKE_INSTALL_PREFIX=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr
-# (computed from repo root so it also works if the workspace path changes)
 INSTALL_ROOT="${INSTALL_ROOT:-${REPO_DIR}/install}"
 INSTALL_USR="${INSTALL_ROOT}/usr"
 
@@ -358,12 +396,26 @@ if [[ "${CLEAN}" -eq 1 ]]; then
   rm -rf "${INSTALL_ROOT}" || true
 fi
 
-# Ensure the install tree exists under the repo root (requested workflow behavior).
-# Note: we intentionally do NOT change the optional/system plugin copy behavior to /usr/lib.
 mkdir -p "${INSTALL_USR}"
 
 # -----------------------------------------------------------------------------
-# Steps 1-22 are retained as-is (package installs/patching/build dependencies)
+# Coverage flags (force in addition to any toolchain file)
+# -----------------------------------------------------------------------------
+# We apply both compile and link flags; this ensures:
+#   - .gcno files emitted at compile-time
+#   - .gcda files emitted when test binaries are executed
+#
+# Note: We keep -O0/-g for debug-friendly coverage and avoid aggressive inlining.
+COVERAGE_C_FLAGS="-O0 -g --coverage -fprofile-arcs -ftest-coverage"
+COVERAGE_CXX_FLAGS="-O0 -g --coverage -fprofile-arcs -ftest-coverage"
+COVERAGE_LINKER_FLAGS="--coverage"
+
+# Optional toolchain file (if present).
+COVERAGE_TOOLCHAIN_FILE_DEFAULT="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/gcc-with-coverage.cmake"
+COVERAGE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE:-${COVERAGE_TOOLCHAIN_FILE_DEFAULT}}"
+
+# -----------------------------------------------------------------------------
+# Steps 1-22 (deps) mostly unchanged
 # -----------------------------------------------------------------------------
 log "[Step 1] Set up cache (SKIP)"
 log "Reason: GitHub Actions cache only."
@@ -610,15 +662,12 @@ fi
 log "[Step 19] Generate external headers (SKIPPED)"
 log "Per request: do later."
 
-log "[Step 20] Set gcc/with-coverage toolchain (wire CMake toolchain file)"
-COVERAGE_TOOLCHAIN_FILE_DEFAULT="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/gcc-with-coverage.cmake"
-COVERAGE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE:-${COVERAGE_TOOLCHAIN_FILE_DEFAULT}}"
-
+log "[Step 20] Coverage toolchain file (optional)"
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
   log "Coverage toolchain found: ${COVERAGE_TOOLCHAIN_FILE}"
 else
   warn "Coverage toolchain file not found at: ${COVERAGE_TOOLCHAIN_FILE}"
-  warn "Step 20 will be effectively skipped; coverage flags will not be injected by toolchain."
+  warn "Proceeding with explicit coverage flags via -DCMAKE_{C,CXX}_FLAGS and -DCMAKE_{EXE,SHARED}_LINKER_FLAGS."
 fi
 
 log "[Step 21] Build googletest (configure/build/install into install/usr)"
@@ -628,6 +677,10 @@ if [[ -d "${GTEST_DIR}" ]]; then
     -DBUILD_GMOCK=ON
     -Dgtest_force_shared_crt=OFF
     -DINSTALL_GTEST=ON
+    -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
+    -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
+    -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
+    -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
   )
 
   if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
@@ -645,20 +698,13 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# [Step 22] Build mocks
+# Step 23: Build entservices-appgateway
+#   - Build plugins: AppGateway, AppGatewayCommon, AppNotifications
+#   - Build L1 tests only for AppGateway (test_AppGateway.cpp)
+#   - Enforce coverage flags
 # -----------------------------------------------------------------------------
-# Per request: Step 22 is commented out (not required for now).
-# log "[Step 22] Build mocks (COMMENTED OUT - not required for now)"
-# log "Per request: step 22 is not required for now."
+log "[Step 23] Build entservices-appgateway (plugins + L1 tests with coverage)"
 
-# -----------------------------------------------------------------------------
-# Step 23: Build entservices-appgateway (configure/build/install; MUST build plugin .so)
-# -----------------------------------------------------------------------------
-log "[Step 23] Build entservices-appgateway (configure/build/install with -DRDK_SERVICES_L1_TEST=ON -DPLUGIN_APPGATEWAY=ON)"
-
-# IMPORTANT:
-# Step 23 MUST configure from the entservices-appgateway-34 repository root (this repo),
-# NOT from the overall workspace root.
 APPGATEWAY_SRC_DIR="${REPO_DIR}"
 if have_cmd git && [[ -d "${REPO_DIR}/.git" ]]; then
   APPGATEWAY_SRC_DIR="$(git -C "${REPO_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${REPO_DIR}")"
@@ -670,64 +716,61 @@ if [[ ! -f "${APPGATEWAY_SRC_DIR}/CMakeLists.txt" ]]; then
   exit 1
 fi
 
-# -----------------------------------------------------------------------------
-# Step 23a: Pre-build/install AppGateway plugin ONLY.
-#
-# Why:
-#   The L1Tests CMake currently performs a configure-time search for an *installed*
-#   AppGateway plugin .so if it cannot link against an in-build target. In a clean
-#   tree, that .so does not exist yet until after build/install. This preinstall
-#   ensures /usr/lib/wpeframework/plugins has the plugin before L1 tests configure.
-# -----------------------------------------------------------------------------
-log "[Step 23a] Pre-build/install AppGateway plugin only (for L1Tests configure-time linkage)"
+# Step 23a: Build AppGateway plugin shared library for configure-time linkage,
+# but DO NOT run install because AppGateway's CMakeLists.txt installs a config file to:
+#   /etc/app-gateway/
+# which fails in non-root CI environments.
+log "[Step 23a] Build AppGateway plugin only (NO INSTALL; avoid writing to /etc/app-gateway)"
 
 APPGATEWAY_PLUGINONLY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway-pluginonly"
-cmake_configure_build_install \
+
+PLUGINONLY_CMAKE_ARGS=(
+  -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
+  -DPLUGIN_APPGATEWAY=ON
+  -DPLUGIN_APPGATEWAYCOMMON=OFF
+  -DPLUGIN_APPNOTIFICATIONS=OFF
+  -DRDK_SERVICES_L1_TEST=OFF
+  -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
+  -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
+  -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
+  -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
+)
+
+if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
+  PLUGINONLY_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+fi
+
+cmake_configure_build_noinstall \
   "entservices-appgateway-pluginonly" \
   "${APPGATEWAY_SRC_DIR}" \
   "${APPGATEWAY_PLUGINONLY_BUILD_DIR}" \
-  "${INSTALL_USR}" \
-  -DCMAKE_PREFIX_PATH="${INSTALL_USR}" \
-  -DPLUGIN_APPGATEWAY=ON
+  "${PLUGINONLY_CMAKE_ARGS[@]}"
 
-SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
+# Find the built .so and copy to a local plugin dir that the tests can link/load from.
 PLUGIN_SO=""
-
-for d in "${INSTALL_USR}/lib/wpeframework/plugins" "${INSTALL_USR}/lib64/wpeframework/plugins"; do
-  if compgen -G "${d}/*AppGateway*.so*" >/dev/null; then
-    PLUGIN_SO="$(ls -1 "${d}/"*AppGateway*.so* 2>/dev/null | head -n 1)"
-    break
-  fi
-done
+if compgen -G "${APPGATEWAY_PLUGINONLY_BUILD_DIR}/AppGateway/*.so*" >/dev/null; then
+  PLUGIN_SO="$(ls -1 "${APPGATEWAY_PLUGINONLY_BUILD_DIR}/AppGateway/"*.so* 2>/dev/null | head -n 1)"
+fi
 
 if [[ -z "${PLUGIN_SO}" || ! -f "${PLUGIN_SO}" ]]; then
-  err "Preinstall step failed: AppGateway plugin .so not found under ${INSTALL_USR}/{lib,lib64}/wpeframework/plugins"
+  err "Plugin-only build did not produce AppGateway .so at expected location."
+  err "Checked: ${APPGATEWAY_PLUGINONLY_BUILD_DIR}/AppGateway/*.so*"
   exit 1
 fi
 
-log "[Step 23a] Copying AppGateway plugin into ${SYSTEM_PLUGIN_DIR}: ${PLUGIN_SO}"
-if is_root; then
-  mkdir -p "${SYSTEM_PLUGIN_DIR}"
-  cp -f "${PLUGIN_SO}" "${SYSTEM_PLUGIN_DIR}/"
-else
-  if have_cmd sudo; then
-    sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
-    sudo -n cp -f "${PLUGIN_SO}" "${SYSTEM_PLUGIN_DIR}/"
-  else
-    err "Need root/sudo to install plugin into ${SYSTEM_PLUGIN_DIR} for L1 tests."
-    exit 1
-  fi
-fi
+# Place plugin in a workspace-local plugin directory (no sudo required).
+LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
+mkdir -p "${LOCAL_PLUGIN_DIR}"
+cp -f "${PLUGIN_SO}" "${LOCAL_PLUGIN_DIR}/"
 
-log "[Step 23a] System plugin dir listing (AppGateway-related):"
-ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
+log "[OK] AppGateway plugin staged for L1 tests at: ${LOCAL_PLUGIN_DIR}/$(basename "${PLUGIN_SO}")"
+ls -la "${LOCAL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
 
-# -----------------------------------------------------------------------------
-# Step 23b: Full build with L1 tests enabled (now that plugin .so is present).
-# -----------------------------------------------------------------------------
+# Step 23b: Full build with L1 tests enabled and all relevant plugins compiled.
+log "[Step 23b] Full build entservices-appgateway (AppGateway + AppGatewayCommon + AppNotifications + L1 tests; install to ${INSTALL_USR}; coverage enabled)"
+
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
-# Generator args (required for: "log FULL CMake configure command (including generator)").
 APPGW_CMAKE_GENERATOR_ARGS=()
 if have_cmd ninja; then
   APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
@@ -738,7 +781,13 @@ fi
 EXTRA_APPGW_CMAKE_ARGS=(
   -DRDK_SERVICES_L1_TEST=ON
   -DPLUGIN_APPGATEWAY=ON
+  -DPLUGIN_APPGATEWAYCOMMON=ON
+  -DPLUGIN_APPNOTIFICATIONS=ON
   -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
+  -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
+  -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
+  -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
+  -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
 )
 
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
@@ -769,91 +818,9 @@ cmake_configure_build_install \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
 # -----------------------------------------------------------------------------
-# Step 24: Verify plugin .so is available and install/copy it where L1 tests expect it.
-# Also copy required mock headers into install include (so builds can find them via prefix).
+# Step 24: Ensure required mock headers are available via install prefix include
 # -----------------------------------------------------------------------------
-log "[Step 24] Verify AppGateway plugin .so and copy required mocks"
-
-EXPECTED_PLUGIN_NAMES=(
-  "AppGateway"
-)
-
-INSTALL_PLUGIN_DIR=""
-INSTALL_PLUGIN_DIR_CANDIDATES=(
-  "${INSTALL_USR}/lib/wpeframework/plugins"
-  "${INSTALL_USR}/lib64/wpeframework/plugins"
-)
-
-for d in "${INSTALL_PLUGIN_DIR_CANDIDATES[@]}"; do
-  if [[ -d "${d}" ]]; then
-    INSTALL_PLUGIN_DIR="${d}"
-    break
-  fi
-done
-
-if [[ -z "${INSTALL_PLUGIN_DIR}" ]]; then
-  err "No install plugin directory found under install prefix: ${INSTALL_USR}"
-  err "Checked:"
-  printf '  - %s\n' "${INSTALL_PLUGIN_DIR_CANDIDATES[@]}" >&2
-  exit 1
-fi
-
-log "[Step 24] Installed plugin directory: ${INSTALL_PLUGIN_DIR}"
-log "[Step 24] Installed plugins listing:"
-ls -la "${INSTALL_PLUGIN_DIR}" || true
-
-for plugin_name in "${EXPECTED_PLUGIN_NAMES[@]}"; do
-  if ! compgen -G "${INSTALL_PLUGIN_DIR}/*${plugin_name}*.so*" >/dev/null; then
-    err "Expected plugin .so missing after install: ${plugin_name}"
-    err "Expected a match for pattern: ${INSTALL_PLUGIN_DIR}/*${plugin_name}*.so*"
-    exit 1
-  fi
-done
-
-APPGW_PLUGIN_SRC=""
-if compgen -G "${INSTALL_PLUGIN_DIR}/*AppGateway*.so*" >/dev/null; then
-  APPGW_PLUGIN_SRC="$(ls -1 "${INSTALL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null | head -n 1)"
-fi
-
-if [[ -z "${APPGW_PLUGIN_SRC}" || ! -f "${APPGW_PLUGIN_SRC}" ]]; then
-  err "Step 24 did not locate an AppGateway plugin .so under: ${INSTALL_PLUGIN_DIR}"
-  err "Expected a file matching: ${INSTALL_PLUGIN_DIR}/*AppGateway*.so*"
-  err "Check build output under: ${APPGATEWAY_BUILD_DIR}"
-  exit 1
-fi
-
-log "[OK] Located AppGateway plugin .so at: ${APPGW_PLUGIN_SRC}"
-ls -la "${APPGW_PLUGIN_SRC}" || true
-
-# Copy plugin .so into system dir expected by runtime loader in this workflow.
-SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
-SYSTEM_PLUGIN_SO_PATH="${SYSTEM_PLUGIN_DIR}/$(basename "${APPGW_PLUGIN_SRC}")"
-
-log "[Step 24] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_SO_PATH}"
-if is_root; then
-  mkdir -p "${SYSTEM_PLUGIN_DIR}"
-  cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_SO_PATH}"
-else
-  if have_cmd sudo; then
-    sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
-    sudo -n cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_SO_PATH}"
-  else
-    err "Cannot install plugin into ${SYSTEM_PLUGIN_DIR}: need root or sudo."
-    err "Plugin is present at: ${APPGW_PLUGIN_SRC}"
-    err "Expected final install path for tests: ${SYSTEM_PLUGIN_SO_PATH}"
-    exit 1
-  fi
-fi
-
-if [[ ! -f "${SYSTEM_PLUGIN_SO_PATH}" ]]; then
-  err "Plugin copy verification failed; missing: ${SYSTEM_PLUGIN_SO_PATH}"
-  exit 1
-fi
-
-log "[OK] System plugin dir now contains (AppGateway-related):"
-ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
-
-# Copy required mock headers into the install prefix (so include discovery works via ${INSTALL_USR}/include).
+log "[Step 24] Copy required mock headers into install prefix include/Tests/mocks"
 MOCKS_SRC_DIR="${REPO_DIR}/Tests/mocks"
 MOCKS_DST_DIR="${INSTALL_USR}/include/Tests/mocks"
 mkdir -p "${MOCKS_DST_DIR}"
@@ -862,23 +829,29 @@ cp -f "${MOCKS_SRC_DIR}/ServiceMock.h" "${MOCKS_DST_DIR}/ServiceMock.h"
 cp -f "${MOCKS_SRC_DIR}/ThunderPortability.h" "${MOCKS_DST_DIR}/ThunderPortability.h"
 log "[OK] Mock headers copied to: ${MOCKS_DST_DIR}"
 
-log "[DONE] Steps 1–24 completed (Step 22 commented out per request)."
-
+# -----------------------------------------------------------------------------
+# Step 25: (kept skipped)
+# -----------------------------------------------------------------------------
 log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/device nodes)"
 log "Per request: commented/skipped for now."
 
 # -----------------------------------------------------------------------------
-# Step 26: Run unit tests without valgrind (REQUIRED)
+# Step 26: Build and run AppGateway L1 test binary (REQUIRED for .gcda)
 # -----------------------------------------------------------------------------
-log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for coverage)"
+log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for coverage)"
 
 (
   export PATH="${INSTALL_USR}/bin:${PATH}"
-  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+
+  # Ensure plugin and libraries are discoverable at runtime.
+  # Include:
+  #  - install/usr/lib
+  #  - install/usr/lib/wpeframework/plugins (local plugin staging)
+  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+
   export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
   TEST_BIN=""
-
   if have_cmd AppGatewayL1Test; then
     TEST_BIN="AppGatewayL1Test"
   else
@@ -891,8 +864,8 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
 
   if [[ -z "${TEST_BIN}" ]]; then
     err "AppGatewayL1Test not found."
-    err "Checked PATH (expected: ${INSTALL_USR}/bin) and build tree under: ${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/"
-    err "Ensure Step 23 built this repo with -DRDK_SERVICES_L1_TEST=ON and that the target AppGatewayL1Test exists."
+    err "Expected it from building Tests/L1Tests (includes Tests/L1Tests/tests/test_AppGateway.cpp)."
+    err "Checked PATH (${INSTALL_USR}/bin) and build tree under: ${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/"
     exit 1
   fi
 
@@ -904,12 +877,10 @@ log "[Step 26] Run unit tests without valgrind (REQUIRED - generates .gcda for c
 )
 log "[OK] Step 26 complete: ${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
 
-log "[Step 27] Run unit tests with valgrind (NOT REQUIRED - skipped; focusing on coverage report)"
-
 # -----------------------------------------------------------------------------
-# Step 28: Generate coverage (REQUIRED)
+# Step 28: Generate coverage HTML report (AppGateway-only)
 # -----------------------------------------------------------------------------
-log "[Step 28] Generate coverage (REQUIRED)"
+log "[Step 28] Generate coverage HTML report (AppGateway sources only)"
 
 LCOVRC_SRC_1="${REPO_DIR}/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
 LCOVRC_SRC_2="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
@@ -933,11 +904,14 @@ fi
 COVERAGE_DIR="${REPO_DIR}/coverage"
 COVERAGE_INFO="${REPO_DIR}/coverage.info"
 FILTERED_INFO="${REPO_DIR}/filtered_coverage.info"
+APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
 
-rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" || true
+rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" "${APPGW_ONLY_INFO}" || true
 
+# Capture from the *full build tree* (contains tests and plugin objects).
 lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
 
+# Filter out system and third-party paths.
 lcov -r "${COVERAGE_INFO}" \
   '/usr/include/*' \
   "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
@@ -948,23 +922,15 @@ lcov -r "${COVERAGE_INFO}" \
   '*/Thunder/*' \
   -o "${FILTERED_INFO}"
 
-APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
+# Restrict report to AppGateway plugin sources (and its common helpers if desired).
+# Authoritative requirement: "coverage html report for all the files in AppGateway plugin source".
 lcov -e "${FILTERED_INFO}" \
   '*/AppGateway/*' \
-  '*/AppGatewayCommon/*' \
   -o "${APPGW_ONLY_INFO}"
 
 genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) coverage" "${APPGW_ONLY_INFO}"
 
 log "[OK] Coverage generated at: ${COVERAGE_DIR}/index.html"
-
-if ls "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so >/dev/null 2>&1; then
-  log "[OK] AppGateway plugin .so appears present under ${INSTALL_USR}/lib/wpeframework/plugins"
-  ls -la "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so || true
-else
-  warn "AppGateway plugin .so not found under ${INSTALL_USR}/lib/wpeframework/plugins"
-  warn "If this is unexpected, check whether the plugin target is enabled in the top-level build/install."
-fi
 
 log "[Step 29] Upload artifacts (COMMENTED - not applicable locally)"
 
@@ -979,6 +945,7 @@ echo "  BUILD_ROOT=${BUILD_ROOT}"
 echo "  INSTALL_PREFIX=${INSTALL_USR}"
 echo "  CLEAN=${CLEAN} FORCE_REBUILD=${FORCE_REBUILD} FORCE_RECLONE=${FORCE_RECLONE}"
 echo "  COVERAGE_TOOLCHAIN_FILE=${COVERAGE_TOOLCHAIN_FILE}"
+echo "  COVERAGE_FLAGS(CXX)=${COVERAGE_CXX_FLAGS}"
 echo "  APPGATEWAY_BUILD_DIR=${APPGATEWAY_BUILD_DIR}"
-echo "  TEST_RUNNER=AppGatewayL1Test (expected at ${INSTALL_USR}/bin/AppGatewayL1Test)"
-echo "  COVERAGE_DIR=${COVERAGE_DIR:-}"
+echo "  TEST_RUNNER=AppGatewayL1Test"
+echo "  COVERAGE_DIR=${COVERAGE_DIR}"
