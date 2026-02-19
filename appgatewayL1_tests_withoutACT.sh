@@ -1084,18 +1084,60 @@ else
 
   rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" "${APPGW_ONLY_INFO}" || true
 
-  # Capture from the build tree that produced the test executable and linked objects.
-  # With Step 23b commented, this is the Step 23c L1Tests-only build dir; it still
-  # compiles AppGateway sources (with coverage flags) as part of dependency linkage.
-  lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
-  rc=$?
-  if [[ $rc -ne 0 ]]; then
-    warn "lcov capture failed with exit code ${rc}"
-    COVERAGE_EXIT_CODE=$rc
+  # In some CI environments, geninfo can fail with:
+  #   - "mismatched end line ..." (typically due to differing debug info / compiler behavior)
+  #   - "no valid records found ..." when tracefile is empty
+  #
+  # We still want to generate *some* HTML output if any coverage exists, so we:
+  #   1) capture with lcov and ignore mismatch/empty errors
+  #   2) if capture didn't produce a usable tracefile, fall back to calling geninfo
+  #
+  # Note: lcov wraps geninfo internally; however, the fallback makes the behavior
+  # explicit and tends to be more resilient across lcov versions.
+  if have_cmd lcov; then
+    log "Capturing coverage data from ${APPGATEWAY_BUILD_DIR}"
+    # Prefer --capture form (more explicit than -c) and ignore common non-fatal errors.
+    lcov --capture \
+      --directory "${APPGATEWAY_BUILD_DIR}" \
+      --output-file "${COVERAGE_INFO}" \
+      --ignore-errors mismatch,empty \
+      >/dev/null 2>&1
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      warn "lcov capture failed with exit code ${rc}"
+      COVERAGE_EXIT_CODE=$rc
+    fi
+  else
+    warn "lcov not available; cannot capture coverage."
+    COVERAGE_EXIT_CODE=2
   fi
 
-  # Filter out system and third-party paths.
-  if [[ -f "${COVERAGE_INFO}" ]]; then
+  # Fallback: if the tracefile was not created or is empty, attempt direct geninfo.
+  if [[ ! -s "${COVERAGE_INFO}" ]]; then
+    if have_cmd geninfo; then
+      warn "Coverage tracefile missing/empty after lcov capture; retrying via geninfo (ignore mismatch)."
+      # geninfo usage: geninfo <directory> --output-filename <file>
+      geninfo "${APPGATEWAY_BUILD_DIR}" \
+        --output-filename "${COVERAGE_INFO}" \
+        --ignore-errors mismatch \
+        --memory 0 \
+        >/dev/null 2>&1
+      rc=$?
+      if [[ $rc -ne 0 ]]; then
+        warn "geninfo fallback failed with exit code ${rc}"
+        COVERAGE_EXIT_CODE=$rc
+      fi
+    else
+      warn "geninfo not available; cannot perform fallback capture."
+    fi
+  fi
+
+  # If we still don't have a non-empty tracefile, we cannot filter/include/genhtml.
+  if [[ ! -s "${COVERAGE_INFO}" ]]; then
+    warn "Coverage tracefile is missing/empty (${COVERAGE_INFO}); cannot generate HTML coverage."
+    COVERAGE_EXIT_CODE=${COVERAGE_EXIT_CODE:-3}
+  else
+    # Filter out system and third-party paths.
     lcov -r "${COVERAGE_INFO}" \
       '/usr/include/*' \
       "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
@@ -1104,40 +1146,47 @@ else
       '*/Tests/mocks/*' \
       '*/Tests/L1Tests/tests/*' \
       '*/Thunder/*' \
+      --ignore-errors empty \
       -o "${FILTERED_INFO}"
     rc=$?
     if [[ $rc -ne 0 ]]; then
       warn "lcov filter (-r) failed with exit code ${rc}"
       COVERAGE_EXIT_CODE=$rc
     fi
-  fi
 
-  # Restrict report to AppGateway plugin sources.
-  if [[ -f "${FILTERED_INFO}" ]]; then
-    lcov -e "${FILTERED_INFO}" \
-      '*/AppGateway/*' \
-      -o "${APPGW_ONLY_INFO}"
-    rc=$?
-    if [[ $rc -ne 0 ]]; then
-      warn "lcov include (-e) failed with exit code ${rc}"
-      COVERAGE_EXIT_CODE=$rc
-    fi
-  fi
-
-  # Always attempt to generate HTML if we have a final info file.
-  if [[ -f "${APPGW_ONLY_INFO}" ]]; then
-    genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) coverage" "${APPGW_ONLY_INFO}"
-    rc=$?
-    if [[ $rc -ne 0 ]]; then
-      warn "genhtml failed with exit code ${rc}"
-      COVERAGE_EXIT_CODE=$rc
+    # Restrict report to AppGateway plugin sources.
+    if [[ -s "${FILTERED_INFO}" ]]; then
+      lcov -e "${FILTERED_INFO}" \
+        '*/AppGateway/*' \
+        --ignore-errors empty \
+        -o "${APPGW_ONLY_INFO}"
+      rc=$?
+      if [[ $rc -ne 0 ]]; then
+        warn "lcov include (-e) failed with exit code ${rc}"
+        COVERAGE_EXIT_CODE=$rc
+      fi
     else
-      COVERAGE_HTML_INDEX="${COVERAGE_DIR}/index.html"
-      log "[OK] Coverage generated at: ${COVERAGE_HTML_INDEX}"
+      warn "Filtered coverage tracefile is missing/empty (${FILTERED_INFO}); cannot generate HTML coverage."
+      COVERAGE_EXIT_CODE=${COVERAGE_EXIT_CODE:-3}
     fi
-  else
-    warn "Coverage input file not found (${APPGW_ONLY_INFO}); cannot generate HTML coverage."
-    COVERAGE_EXIT_CODE=${COVERAGE_EXIT_CODE:-3}
+
+    # Always attempt to generate HTML if we have a final non-empty info file.
+    if [[ -s "${APPGW_ONLY_INFO}" ]]; then
+      genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) coverage" "${APPGW_ONLY_INFO}"
+      rc=$?
+      if [[ $rc -ne 0 ]]; then
+        warn "genhtml failed with exit code ${rc}"
+        COVERAGE_EXIT_CODE=$rc
+      else
+        COVERAGE_HTML_INDEX="${COVERAGE_DIR}/index.html"
+        log "[OK] Coverage generated at: ${COVERAGE_HTML_INDEX}"
+        # If tests failed but coverage was generated, do not treat coverage mismatch/empty warnings as fatal.
+        COVERAGE_EXIT_CODE=0
+      fi
+    else
+      warn "Coverage input file not found/empty (${APPGW_ONLY_INFO}); cannot generate HTML coverage."
+      COVERAGE_EXIT_CODE=${COVERAGE_EXIT_CODE:-3}
+    fi
   fi
 fi
 
