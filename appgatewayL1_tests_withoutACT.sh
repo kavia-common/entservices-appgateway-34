@@ -358,6 +358,10 @@ if [[ "${CLEAN}" -eq 1 ]]; then
   rm -rf "${INSTALL_ROOT}" || true
 fi
 
+# Ensure the install tree exists under the repo root (requested workflow behavior).
+# Note: we intentionally do NOT change the optional/system plugin copy behavior to /usr/lib.
+mkdir -p "${INSTALL_USR}"
+
 # -----------------------------------------------------------------------------
 # Steps 1-22 are retained as-is (package installs/patching/build dependencies)
 # -----------------------------------------------------------------------------
