@@ -730,11 +730,18 @@ L1TESTS_ONLY_CMAKE_ARGS=(
   # Ensure find_package() can locate Thunder plugin package config when building
   # ONLY Tests/L1Tests (no full install of entservices-appgateway).
   -DWPEFrameworkPlugins_DIR="${INSTALL_USR}/lib/cmake/WPEFrameworkPlugins"
+
+  # Authoritative fix: compile tests/mocks against Thunder R4 interface headers so
+  # MOCK_METHOD(..., override) matches the actual virtual methods.
+  -DUSE_THUNDER_R4=ON
+
   -DRDK_SERVICES_L1_TEST=ON
+
   # Build the plugin sources so the required .so files are produced
   -DPLUGIN_APPGATEWAY=ON
   -DPLUGIN_APPGATEWAYCOMMON=OFF
   -DPLUGIN_APPNOTIFICATIONS=OFF
+
   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
   -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
   -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
@@ -754,6 +761,8 @@ cmake_configure_build_noinstall \
 
 # Stage required plugin shared libraries built as part of the L1Tests-only build.
 # This is critical: runtime loads the AppGateway plugin .so and the L1TestsIN module .so.
+# In addition, AppGateway is typically linked/loaded with sibling plugin libs from this repo;
+# stage them as well so runtime resolution via LD_LIBRARY_PATH is stable.
 LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
 mkdir -p "${LOCAL_PLUGIN_DIR}"
 
@@ -775,10 +784,45 @@ stage_plugin_so_from_glob() {
   log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/$(basename "${so_path}")"
 }
 
-# AppGateway plugin (built as part of the L1Tests-only build dependency graph)
+stage_all_plugins_from_dir_best_effort() {
+  local src_dir="$1"
+  local desc="$2"
+
+  if [[ ! -d "${src_dir}" ]]; then
+    warn "No plugin dir found for staging (${desc}): ${src_dir}"
+    return 0
+  fi
+
+  local count=0
+  while IFS= read -r -d '' f; do
+    cp -f "${f}" "${LOCAL_PLUGIN_DIR}/"
+    count=$((count + 1))
+  done < <(find "${src_dir}" -maxdepth 1 -type f -name "*.so*" -print0 2>/dev/null)
+
+  if [[ "${count}" -eq 0 ]]; then
+    warn "No .so outputs found to stage from ${src_dir} (${desc})."
+  else
+    log "[OK] Staged ${count} shared libraries from ${src_dir} (${desc})"
+  fi
+}
+
+# Build output layout:
+#   - AppGateway plugin .so is expected under: <build>/AppGateway/
+#   - AppNotifications plugin .so under:      <build>/AppNotifications/
+#   - AppGatewayCommon plugin .so under:      <build>/AppGatewayCommon/
+#   - L1TestsIN test module .so under:        <build>/ (root)
+#
+# Stage per-plugin dirs first (best effort), then enforce the two hard requirements:
+#   - AppGateway plugin .so
+#   - L1TestsIN test module .so
+stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGateway" "AppGateway"
+stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppNotifications" "AppNotifications"
+stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGatewayCommon" "AppGatewayCommon"
+
+# AppGateway plugin (hard requirement)
 stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*\"" "AppGateway plugin"
 
-# L1TestsIN plugin module (built from Tests/L1Tests add_library(${MODULE_NAME} ...))
+# L1TestsIN plugin module (hard requirement; built from Tests/L1Tests add_library(${MODULE_NAME} ...))
 stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/*.so*\"" "L1TestsIN test module"
 
 ls -la "${LOCAL_PLUGIN_DIR}/"*.so* 2>/dev/null || true
