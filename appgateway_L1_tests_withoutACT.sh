@@ -338,7 +338,10 @@ GTEST_DIR="${REPO_DIR}/googletest"
 
 PATCHES_DIR="${REPO_DIR}/Tests/patches"
 
-INSTALL_ROOT="${INSTALL_ROOT:-${WORKSPACE_ROOT}/install}"
+# Default install prefix requested for this workflow:
+#   -DCMAKE_INSTALL_PREFIX=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr
+# (computed from repo root so it also works if the workspace path changes)
+INSTALL_ROOT="${INSTALL_ROOT:-${REPO_DIR}/install}"
 INSTALL_USR="${INSTALL_ROOT}/usr"
 
 BUILD_ROOT="${BUILD_ROOT:-/tmp/entservices-appgateway-build}"
@@ -637,14 +640,11 @@ log "Per request: step 22 is not required for now."
 # -----------------------------------------------------------------------------
 # Step 23: Build entservices-appgateway (REQUIRED)
 # -----------------------------------------------------------------------------
-log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, RDK_SERVICES_L1_TEST=ON)"
-
-APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
+log "[Step 23] Build entservices-appgateway (two-phase: install plugin first, then build/install L1 tests against installed plugin)"
 
 # IMPORTANT:
 # Step 23 MUST configure from the entservices-appgateway-34 repository root (this repo),
-# NOT from the overall workspace root. The authoritative failure was:
-#   CMake Error: The source directory "/home/kavia/workspace/code-generation" does not appear to contain CMakeLists.txt.
+# NOT from the overall workspace root.
 APPGATEWAY_SRC_DIR="${REPO_DIR}"
 if have_cmd git && [[ -d "${REPO_DIR}/.git" ]]; then
   APPGATEWAY_SRC_DIR="$(git -C "${REPO_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${REPO_DIR}")"
@@ -656,18 +656,10 @@ if [[ ! -f "${APPGATEWAY_SRC_DIR}/CMakeLists.txt" ]]; then
   exit 1
 fi
 
-EXTRA_APPGW_CMAKE_ARGS=(
-  -DRDK_SERVICES_L1_TEST=ON
+APPGATEWAY_BUILD_DIR_PLUGIN="${BUILD_ROOT}/entservices-appgateway-plugin"
+APPGATEWAY_BUILD_DIR_TESTS="${BUILD_ROOT}/entservices-appgateway-tests"
 
-  # Required: ensure plugin is built (top-level only adds subdir if this is ON)
-  -DPLUGIN_APPGATEWAY=ON
-)
-
-if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-  EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
-fi
-
-# Log full configure command used (including generator).
+# Generator args (for logging parity with workflow requirements).
 APPGW_CMAKE_GENERATOR_ARGS=()
 if have_cmd ninja; then
   APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
@@ -675,31 +667,46 @@ else
   APPGW_CMAKE_GENERATOR_ARGS=(-G "Unix Makefiles")
 fi
 
+# ---------------------------
+# Phase A: Build+install plugin only
+# ---------------------------
+EXTRA_APPGW_PLUGIN_CMAKE_ARGS=(
+  # Build/install the plugin .so
+  -DPLUGIN_APPGATEWAY=ON
+
+  # Do not enable L1 tests in this phase; ensures plugin installs first
+  -DRDK_SERVICES_L1_TEST=OFF
+)
+
+if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
+  EXTRA_APPGW_PLUGIN_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+fi
+
 (
-  printf '==> entservices-appgateway: Full CMake configure command: '
+  printf '==> entservices-appgateway (plugin phase): Full CMake configure command: '
   printf 'cmake'
   for a in "${APPGW_CMAKE_GENERATOR_ARGS[@]}"; do
     printf ' %q' "${a}"
   done
   printf ' -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
     "${APPGATEWAY_SRC_DIR}" \
-    "${APPGATEWAY_BUILD_DIR}" \
+    "${APPGATEWAY_BUILD_DIR_PLUGIN}" \
     "${INSTALL_USR}"
-  for a in "${EXTRA_APPGW_CMAKE_ARGS[@]}"; do
+  for a in "${EXTRA_APPGW_PLUGIN_CMAKE_ARGS[@]}"; do
     printf ' %q' "${a}"
   done
   printf '\n'
 )
 
 cmake_configure_build_install \
-  "entservices-appgateway" \
+  "entservices-appgateway(plugin)" \
   "${APPGATEWAY_SRC_DIR}" \
-  "${APPGATEWAY_BUILD_DIR}" \
+  "${APPGATEWAY_BUILD_DIR_PLUGIN}" \
   "${INSTALL_USR}" \
-  "${EXTRA_APPGW_CMAKE_ARGS[@]}"
+  "${EXTRA_APPGW_PLUGIN_CMAKE_ARGS[@]}"
 
 # -----------------------------------------------------------------------------
-# Verification: ensure expected plugin .so files are available after build/install.
+# Verification: ensure expected plugin .so files are available after install.
 # -----------------------------------------------------------------------------
 EXPECTED_PLUGIN_NAMES=(
   "AppGateway"
@@ -744,7 +751,6 @@ log "[OK] Expected plugin .so files are present under install prefix."
 # -----------------------------------------------------------------------------
 SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
 
-# Select the AppGateway plugin .so from the install prefix.
 APPGW_PLUGIN_SRC=""
 if compgen -G "${INSTALL_PLUGIN_DIR}/*AppGateway*.so*" >/dev/null; then
   APPGW_PLUGIN_SRC="$(ls -1 "${INSTALL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null | head -n 1)"
@@ -753,7 +759,7 @@ fi
 if [[ -z "${APPGW_PLUGIN_SRC}" || ! -f "${APPGW_PLUGIN_SRC}" ]]; then
   err "Step 23 did not produce/locate an AppGateway plugin .so under install prefix plugin dir: ${INSTALL_PLUGIN_DIR}"
   err "Expected a file matching: ${INSTALL_PLUGIN_DIR}/*AppGateway*.so*"
-  err "Check build output under: ${APPGATEWAY_BUILD_DIR}"
+  err "Check build output under: ${APPGATEWAY_BUILD_DIR_PLUGIN}"
   exit 1
 fi
 
@@ -786,8 +792,45 @@ fi
 log "[OK] System plugin dir now contains (AppGateway-related):"
 ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
 
-log "[Step 23] System plugin dir listing (*.so*): ${SYSTEM_PLUGIN_DIR}"
-ls -la "${SYSTEM_PLUGIN_DIR}/"*.so* 2>/dev/null || ls -la "${SYSTEM_PLUGIN_DIR}" || true
+# ---------------------------
+# Phase B: Build+install L1 tests against the installed plugin
+# ---------------------------
+EXTRA_APPGW_TESTS_CMAKE_ARGS=(
+  -DRDK_SERVICES_L1_TEST=ON
+
+  # In this phase, we only need tests; they link against the installed plugin .so.
+  -DPLUGIN_APPGATEWAY=OFF
+)
+
+if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
+  EXTRA_APPGW_TESTS_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+fi
+
+(
+  printf '==> entservices-appgateway (tests phase): Full CMake configure command: '
+  printf 'cmake'
+  for a in "${APPGW_CMAKE_GENERATOR_ARGS[@]}"; do
+    printf ' %q' "${a}"
+  done
+  printf ' -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
+    "${APPGATEWAY_SRC_DIR}" \
+    "${APPGATEWAY_BUILD_DIR_TESTS}" \
+    "${INSTALL_USR}"
+  for a in "${EXTRA_APPGW_TESTS_CMAKE_ARGS[@]}"; do
+    printf ' %q' "${a}"
+  done
+  printf '\n'
+)
+
+cmake_configure_build_install \
+  "entservices-appgateway(tests)" \
+  "${APPGATEWAY_SRC_DIR}" \
+  "${APPGATEWAY_BUILD_DIR_TESTS}" \
+  "${INSTALL_USR}" \
+  "${EXTRA_APPGW_TESTS_CMAKE_ARGS[@]}"
+
+# Keep downstream steps working (Step 26/28 reference APPGATEWAY_BUILD_DIR).
+APPGATEWAY_BUILD_DIR="${APPGATEWAY_BUILD_DIR_TESTS}"
 
 log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
 log "Per request: step 24 is not required for now."

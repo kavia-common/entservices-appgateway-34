@@ -25,11 +25,25 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 find_package(${NAMESPACE}Plugins REQUIRED)
 
 # -----------------------------------------------------------------------------
-# Helper: link a test target against the installed AppGateway plugin shared lib.
-# - Prefer the system location required by the workflow: /usr/lib/wpeframework/plugins
-# - Fallback to the workflow install prefix: ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+# Helper: link a test target against AppGateway plugin.
+#
+# Preferred behavior:
+#   - Link against the in-build AppGateway plugin target if it is part of the
+#     current build (avoids configure-time dependency on an already-installed .so).
+#
+# Fallback behavior:
+#   - Link against an already-installed plugin .so (system or install prefix).
 # -----------------------------------------------------------------------------
-function(link_against_installed_appgateway_plugin TARGET_NAME)
+function(link_against_appgateway_plugin TARGET_NAME)
+    # If the plugin is part of this build, link directly to the target.
+    # This guarantees correct build order and avoids undefined references.
+    if (TARGET ${NAMESPACE}AppGateway)
+        message(STATUS "Linking ${TARGET_NAME} against AppGateway plugin target: ${NAMESPACE}AppGateway")
+        target_link_libraries(${TARGET_NAME} PRIVATE ${NAMESPACE}AppGateway)
+        return()
+    endif()
+
+    # Otherwise, attempt to link against an installed .so.
     set(APPGATEWAY_PLUGIN_DIR_SYSTEM "/usr/lib/wpeframework/plugins")
 
     # Prefer the plugin directory configured by the top-level build.
@@ -180,9 +194,9 @@ target_link_directories(${MODULE_NAME} PUBLIC ${CMAKE_INSTALL_PREFIX}/lib ${CMAK
 target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
 # When RDK_SERVICES_L1_TEST is enabled, test objects reference AppGateway symbols.
-# Link against the installed plugin shared library to resolve them.
+# Link against the AppGateway plugin to resolve them.
 if (RDK_SERVICES_L1_TEST)
-    link_against_installed_appgateway_plugin(${MODULE_NAME})
+    link_against_appgateway_plugin(${MODULE_NAME})
 endif()
 
 target_include_directories(${MODULE_NAME}
@@ -273,8 +287,8 @@ if (RDK_SERVICES_L1_TEST)
 
     find_package(GTest REQUIRED)
 
-    # Link against the installed AppGateway plugin shared library (system dir preferred).
-    link_against_installed_appgateway_plugin(${APPGATEWAY_L1_TEST_EXE})
+    # Link against AppGateway plugin (prefer in-build target; fallback to installed .so).
+    link_against_appgateway_plugin(${APPGATEWAY_L1_TEST_EXE})
 
     # Keep existing Thunder plugin host linkage.
     target_link_libraries(${APPGATEWAY_L1_TEST_EXE} PRIVATE
