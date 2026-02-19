@@ -182,8 +182,17 @@ if(PLUGIN_APPGATEWAY)
     # Note: In the L1Tests-only build (Step 23), PLUGIN_APPGATEWAY is ON but the
     # AppGateway subdirectory is *not* necessarily added unless we do it explicitly
     # from the Tests/L1Tests configuration (see below).
+    # Link against the in-tree AppGateway plugin target. In this repo the plugin's
+    # CMake target name resolves to:
+    #   MODULE_NAME = ${NAMESPACE}${PLUGIN_NAME}
+    # and with empty NAMESPACE that becomes simply:
+    #   AppGateway
+    #
+    # The previous value "WPEFrameworkAppGateway" is not an in-tree target here,
+    # so CMake treated it as a raw linker item and emitted `-lWPEFrameworkAppGateway`,
+    # which fails because the built shared library is `libAppGateway.so`.
     list(APPEND APPGATEWAY_L1TEST_LIB
-        WPEFrameworkAppGateway
+        AppGateway
         ${NAMESPACE}Plugins::${NAMESPACE}Plugins
     )
 else()

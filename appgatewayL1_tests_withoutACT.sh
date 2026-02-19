@@ -768,8 +768,13 @@ cmake_configure_build_noinstall \
 log "Step 23: Ensuring required .so artifacts are built (AppGateway + L1TestsIN)"
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target AppGatewayL1Test -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 # Best-effort: L1TestsIN may be skipped if no legacy sources are enabled; AppGateway plugin should exist.
-cmake --build "${APPGATEWAY_BUILD_DIR}" --target "WPEFrameworkAppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
-cmake --build "${APPGATEWAY_BUILD_DIR}" --target "WPEFrameworkAppGatewayCommon" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+#
+# NOTE:
+# In this repository, the AppGateway plugin CMake target name is "AppGateway"
+# (MODULE_NAME = ${NAMESPACE}${PLUGIN_NAME}, and NAMESPACE is empty in our L1 build).
+# The previous "WPEFrameworkAppGateway" target does not exist here and was only present
+# in older/out-of-tree builds; keep any unknown targets best-effort, but ensure we build
+# the real in-tree one.
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGatewayCommon" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "L1TestsIN" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
