@@ -698,12 +698,19 @@ else
 fi
 
 # -----------------------------------------------------------------------------
-# Step 23: Build entservices-appgateway
-#   - Build plugins: AppGateway, AppGatewayCommon, AppNotifications
-#   - Build L1 tests only for AppGateway (test_AppGateway.cpp)
-#   - Enforce coverage flags
+# Step 23 (single-step replacement for former 23a + 23c):
+#   Build AppGatewayL1Test by configuring/building ONLY Tests/L1Tests (no install),
+#   and stage the AppGateway plugin .so from the same build tree for runtime.
+#
+# Why this exists:
+#   - A full build + install of entservices-appgateway attempts to write under
+#     /etc/app-gateway/, which fails in CI/non-root flows.
+#   - Building only Tests/L1Tests avoids install completely, yet still builds:
+#       * AppGatewayL1Test (runnable binary)
+#       * libWPEFrameworkAppGateway.so (plugin shared library) as a dependency
+#   - Coverage is captured from this same build tree in Step 28.
 # -----------------------------------------------------------------------------
-log "[Step 23] Build entservices-appgateway (plugins + L1 tests with coverage)"
+log "[Step 23] Build AppGatewayL1Test via Tests/L1Tests (NO INSTALL; coverage enabled) + stage AppGateway plugin"
 
 APPGATEWAY_SRC_DIR="${REPO_DIR}"
 if have_cmd git && [[ -d "${REPO_DIR}/.git" ]]; then
@@ -715,107 +722,6 @@ if [[ ! -f "${APPGATEWAY_SRC_DIR}/CMakeLists.txt" ]]; then
   err "This must point at the entservices-appgateway-34 repo root."
   exit 1
 fi
-
-# Step 23a: Build AppGateway plugin shared library for configure-time linkage,
-# but DO NOT run install because AppGateway's CMakeLists.txt installs a config file to:
-#   /etc/app-gateway/
-# which fails in non-root CI environments.
-log "[Step 23a] Build AppGateway plugin only (NO INSTALL; avoid writing to /etc/app-gateway)"
-
-APPGATEWAY_PLUGINONLY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway-pluginonly"
-
-PLUGINONLY_CMAKE_ARGS=(
-  -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
-  -DPLUGIN_APPGATEWAY=ON
-  -DPLUGIN_APPGATEWAYCOMMON=OFF
-  -DPLUGIN_APPNOTIFICATIONS=OFF
-  -DRDK_SERVICES_L1_TEST=OFF
-  -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
-  -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
-  -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
-  -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
-)
-
-if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-  PLUGINONLY_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
-fi
-
-cmake_configure_build_noinstall \
-  "entservices-appgateway-pluginonly" \
-  "${APPGATEWAY_SRC_DIR}" \
-  "${APPGATEWAY_PLUGINONLY_BUILD_DIR}" \
-  "${PLUGINONLY_CMAKE_ARGS[@]}"
-
-# Find the built .so and copy to a local plugin dir that the tests can link/load from.
-PLUGIN_SO=""
-if compgen -G "${APPGATEWAY_PLUGINONLY_BUILD_DIR}/AppGateway/*.so*" >/dev/null; then
-  PLUGIN_SO="$(ls -1 "${APPGATEWAY_PLUGINONLY_BUILD_DIR}/AppGateway/"*.so* 2>/dev/null | head -n 1)"
-fi
-
-if [[ -z "${PLUGIN_SO}" || ! -f "${PLUGIN_SO}" ]]; then
-  err "Plugin-only build did not produce AppGateway .so at expected location."
-  err "Checked: ${APPGATEWAY_PLUGINONLY_BUILD_DIR}/AppGateway/*.so*"
-  exit 1
-fi
-
-# Place plugin in a workspace-local plugin directory (no sudo required).
-LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
-mkdir -p "${LOCAL_PLUGIN_DIR}"
-cp -f "${PLUGIN_SO}" "${LOCAL_PLUGIN_DIR}/"
-
-log "[OK] AppGateway plugin staged for L1 tests at: ${LOCAL_PLUGIN_DIR}/$(basename "${PLUGIN_SO}")"
-ls -la "${LOCAL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
-
-# Step 23b: Full build with L1 tests enabled and all relevant plugins compiled.
-# ---------------------------------------------------------------------------
-# IMPORTANT (authoritative request):
-#   Keep Step 23b commented for now.
-#
-# Rationale:
-#   A full build + install runs AppGateway install rules that attempt to install
-#   files into /etc (e.g. /etc/app-gateway/), which fails in CI/non-root flows.
-#
-# Instead, we build the L1 test executable directly from Tests/L1Tests, without
-# installing, while still compiling AppGateway sources with coverage flags.
-# ---------------------------------------------------------------------------
-# log "[Step 23b] Full build entservices-appgateway (AppGateway + AppGatewayCommon + AppNotifications + L1 tests; install to ${INSTALL_USR}; coverage enabled)"
-#
-# APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
-#
-# EXTRA_APPGW_CMAKE_ARGS=(
-#   -DRDK_SERVICES_L1_TEST=ON
-#   -DPLUGIN_APPGATEWAY=ON
-#   -DPLUGIN_APPGATEWAYCOMMON=ON
-#   -DPLUGIN_APPNOTIFICATIONS=ON
-#   -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
-#   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
-#   -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
-#   -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
-#   -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
-# )
-#
-# if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-#   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
-# fi
-#
-# cmake_configure_build_install \
-#   "entservices-appgateway" \
-#   "${APPGATEWAY_SRC_DIR}" \
-#   "${APPGATEWAY_BUILD_DIR}" \
-#   "${INSTALL_USR}" \
-#   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
-
-# ---------------------------------------------------------------------------
-# Step 23c (replacement for Step 23b while Step 23b is commented):
-#   Build AppGatewayL1Test by configuring/building ONLY Tests/L1Tests.
-#
-# Key points:
-#   - We avoid "install" entirely (so no /etc writes).
-#   - We still compile AppGateway sources because Tests/L1Tests depends on the
-#     ${NAMESPACE}Plugins target and includes AppGateway headers.
-#   - Coverage flags are applied at configure-time.
-# ---------------------------------------------------------------------------
-log "[Step 23c] Build AppGatewayL1Test via Tests/L1Tests (NO INSTALL; coverage enabled)"
 
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway-l1tests-only"
 
@@ -844,6 +750,25 @@ cmake_configure_build_noinstall \
   "${APPGATEWAY_SRC_DIR}/Tests/L1Tests" \
   "${APPGATEWAY_BUILD_DIR}" \
   "${L1TESTS_ONLY_CMAKE_ARGS[@]}"
+
+# Stage the AppGateway plugin shared library built as part of the L1Tests-only build.
+PLUGIN_SO=""
+if compgen -G "${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*" >/dev/null; then
+  PLUGIN_SO="$(ls -1 "${APPGATEWAY_BUILD_DIR}/AppGateway/"*.so* 2>/dev/null | head -n 1)"
+fi
+
+if [[ -z "${PLUGIN_SO}" || ! -f "${PLUGIN_SO}" ]]; then
+  err "Step 23 did not produce AppGateway plugin .so at expected location."
+  err "Checked: ${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*"
+  exit 1
+fi
+
+LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
+mkdir -p "${LOCAL_PLUGIN_DIR}"
+cp -f "${PLUGIN_SO}" "${LOCAL_PLUGIN_DIR}/"
+
+log "[OK] AppGateway plugin staged for L1 tests at: ${LOCAL_PLUGIN_DIR}/$(basename "${PLUGIN_SO}")"
+ls -la "${LOCAL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
 
 # The executable is expected in this build tree:
 #   <build>/AppGatewayL1Test

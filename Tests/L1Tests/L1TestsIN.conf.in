@@ -1,0 +1,21 @@
+# Thunder/WPEFramework plugin configuration template for L1TestsIN
+#
+# This file is consumed by ConfigGenerator via write_config(L1TestsIN) from
+# Tests/L1Tests/CMakeLists.txt to generate a runtime .conf file.
+#
+# The L1TestsIN shared object is a legacy test module; for this workflow we
+# primarily care about the runnable AppGatewayL1Test executable, but the CMake
+# still invokes write_config(), so a template must exist.
+#
+# Keep this template minimal and stable. Any placeholders (e.g. @...@) are
+# substituted by ConfigGenerator.
+
+# Plugin metadata
+classname=@PLUGIN_CLASSNAME@
+locator=@PLUGIN_LOCATOR@
+autostart=false
+
+# Optional/default settings for test plugin
+# (Leave empty unless your environment requires specific configuration.)
+configuration={
+}
