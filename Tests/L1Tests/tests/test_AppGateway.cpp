@@ -453,8 +453,10 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListe
     EXPECT_EQ(Core::ERROR_BAD_REQUEST,
         impl.Resolve(ctx, "gateway", "event.method", "{}" /* no listen field */, resolution));
 
-    // Production behavior: ErrorUtils::CustomBadRequest("Missing required boolean 'listen' parameter", ...)
-    EXPECT_THAT(resolution, ::testing::HasSubstr("Missing required boolean 'listen' parameter"));
+    // Authoritative current behavior (see attached log):
+    // {"code":-32602,"message":"Missing required boolean 'listen' parameter"}
+    EXPECT_THAT(resolution, ::testing::HasSubstr("\"code\":-32602"));
+    EXPECT_THAT(resolution, ::testing::HasSubstr("\"message\":\"Missing required boolean 'listen' parameter\""));
 }
 
 TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAvailable)
