@@ -1,0 +1,83 @@
+-- The C compiler identification is GNU 13.3.0
+-- The CXX compiler identification is GNU 13.3.0
+-- Detecting C compiler ABI info
+-- Detecting C compiler ABI info - done
+-- Check for working C compiler: /usr/bin/cc - skipped
+-- Detecting C compile features
+-- Detecting C compile features - done
+-- Detecting CXX compiler ABI info
+-- Detecting CXX compiler ABI info - done
+-- Check for working CXX compiler: /usr/bin/c++ - skipped
+-- Detecting CXX compile features
+-- Detecting CXX compile features - done
+-- Setting up WPEFramework v1.0.0
+-- Building on Linux
+-- ProxyStubGenerator ready /home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/sbin/ProxyStubGenerator/StubGenerator.py
+-- JsonGenerator ready /home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/sbin/JsonGenerator/JsonGenerator.py
+-- CMAKE_BUILD_TYPE: 'Release'
+-- Assuming external events: 
+-- Enabled position independent code
+-- Exception handling is disabled
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD
+-- Performing Test CMAKE_HAVE_LIBC_PTHREAD - Success
+-- Found Threads: TRUE  
+-- Looking for __GNU_LIBRARY__
+-- Looking for __GNU_LIBRARY__ - found
+-- Looking for _POSIX_TIMERS
+-- Looking for _POSIX_TIMERS - found
+-- Found LIBRT: 1  
+-- Messaging enabled
+-- Disabled WCHAR support.
+-- Found PkgConfig: /usr/bin/pkg-config (found version "1.8.1") 
+-- Checking for module 'libsystemd'
+--   Found libsystemd, version 255
+-- Found Systemd: /usr/include  
+-- WPEFrameworkCore added support for generic consumers via WPEFrameworkCore.pc
+-- WPEFrameworkCore added support for cmake consumers via 'WPEFrameworkCoreConfig.cmake'
+-- CompileSettingsDebug added support for cmake consumers via 'CompileSettingsDebugConfig.cmake'
+-- WPEFrameworkCryptalgo added support for cmake consumers via 'WPEFrameworkCryptalgoConfig.cmake'
+-- Found ZLIB: /usr/lib/x86_64-linux-gnu/libz.so (found version "1.3")  
+-- WPEFrameworkWebSocket added support for generic consumers via WPEFrameworkWebSocket.pc
+-- WPEFrameworkWebSocket added support for cmake consumers via 'WPEFrameworkWebSocketConfig.cmake'
+-- WPEFrameworkMessaging added support for cmake consumers via 'WPEFrameworkMessagingConfig.cmake'
+-- WPEFrameworkTracing added support for cmake consumers via 'WPEFrameworkTracingConfig.cmake'
+-- Creating symlink /home/kavia/workspace/code-generation/entservices-appgateway-34/build2_thunder_prefix/Source/messaging/tracing.h -> messaging.h
+ProxyStubGenerator: created file ProxyStubsMetadata.cpp
+ProxyStubGenerator: ICOM.h: created file ProxyStubs_COM.cpp
+-- WPEFrameworkCOM added support for cmake consumers via 'WPEFrameworkCOMConfig.cmake'
+ProxyStubGenerator: created file ProxyStubsMetadata.cpp
+ProxyStubGenerator: IPlugin.h: created file ProxyStubs_Plugin.cpp
+ProxyStubGenerator: IShell.h: created file ProxyStubs_Shell.cpp
+ProxyStubGenerator: [33mWARNING[0m: IController.h(61): const uint8_t& ttl: input-only fundamental type passed by reference
+ProxyStubGenerator: IController.h: created file ProxyStubs_Controller.cpp
+ProxyStubGenerator: IControllerDeprecated.h: created file ProxyStubs_ControllerDeprecated.cpp
+ProxyStubGenerator: IStateControl.h: created file ProxyStubs_StateControl.cpp
+ProxyStubGenerator: [33mWARNING[0m: ISubSystem.h(143): 'uint8_t* buffer': length of this inbound buffer is not specified; using @maxlength, but this may be inefficient
+ProxyStubGenerator: ISubSystem.h: created file ProxyStubs_SubSystem.cpp
+ProxyStubGenerator: IDispatcher.h: created file ProxyStubs_Dispatcher.cpp
+JsonGenerator: [33mWARNING[0m: IController.h: No version provided for SystemManagement interface, using 1.0.0
+JsonGenerator: IController.h: Success: JSON data classes generated in JsonData_SystemManagement.h
+JsonGenerator: IController.h: Success: JSON-RPC implementation generated in JSystemManagement.h
+JsonGenerator: [33mWARNING[0m: IController.h: No version provided for Discovery interface, using 1.0.0
+JsonGenerator: IController.h: Success: JSON data classes generated in JsonData_Discovery.h
+JsonGenerator: IController.h: Success: JSON-RPC implementation generated in JDiscovery.h
+JsonGenerator: [33mWARNING[0m: IController.h: No version provided for Configuration interface, using 1.0.0
+JsonGenerator: IController.h: Success: JSON-RPC implementation generated in JConfiguration.h
+JsonGenerator: [33mWARNING[0m: IController.h: No version provided for LifeTime interface, using 1.0.0
+JsonGenerator: IController.h: Success: JSON data classes generated in JsonData_LifeTime.h
+JsonGenerator: IController.h: Success: JSON enumeration code generated in JsonEnum_LifeTime.cpp
+JsonGenerator: IController.h: Success: JSON-RPC implementation generated in JLifeTime.h
+JsonGenerator: [33mWARNING[0m: IController.h: No version provided for Metadata interface, using 1.0.0
+JsonGenerator: IController.h: Success: JSON data classes generated in JsonData_Metadata.h
+JsonGenerator: IController.h: Success: JSON-RPC implementation generated in JMetadata.h
+JsonGenerator: IController.h: Success: JSON-RPC API header generated in json_IController.h
+-- WPEFrameworkPlugins added support for generic consumers via WPEFrameworkPlugins.pc
+-- WPEFrameworkPlugins added support for cmake consumers via 'WPEFrameworkPluginsConfig.cmake'
+-- WPEFrameworkProxyStubs added support for cmake consumers via 'WPEFrameworkProxyStubsConfig.cmake'
+-- Checking for module 'breakpad-client'
+--   Package 'breakpad-client', required by 'virtual:world', not found
+-- Writing configuration for WPEFramework using config_generator
+ConfigGenerator: Writing Config JSON
+-- Configuring done (3.9s)
+-- Generating done (0.0s)
+-- Build files have been written to: /home/kavia/workspace/code-generation/entservices-appgateway-34/build2_thunder_prefix

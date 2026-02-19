@@ -272,7 +272,10 @@ is_component_installed() {
       [[ -d "${prefix_usr}/include" && ( -d "${prefix_usr}/include/interfaces" || -d "${prefix_usr}/include/WPEFramework" ) ]]
       ;;
     entservices-appgateway)
-      [[ -x "${prefix_usr}/bin/AppGatewayL1Test" || -d "${prefix_usr}/lib/wpeframework/plugins" ]]
+      # Consider installed only if both the plugin directory exists and the L1 test runner
+      # binary is present. This avoids incorrectly skipping the full build after a
+      # plugin-only preinstall step.
+      [[ -d "${prefix_usr}/lib/wpeframework/plugins" && -x "${prefix_usr}/bin/AppGatewayL1Test" ]]
       ;;
     *)
       return 1
@@ -309,11 +312,14 @@ cmake_configure_build_install() {
     gen_args=(-G "Unix Makefiles")
   fi
 
-  log "${component_name}: CMake configure: cmake ${gen_args[*]} -S ${src_dir} -B ${build_dir} -DCMAKE_INSTALL_PREFIX=${install_prefix}"
+  log "${component_name}: CMake configure: cmake ${gen_args[*]} -S ${src_dir} -B ${build_dir} -DCMAKE_INSTALL_PREFIX=${install_prefix} (verbose; log: ${build_dir}/configure_verbose.log)"
   cmake "${gen_args[@]}" -S "${src_dir}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
-    "${extra_args[@]}"
+    -DCMAKE_VERBOSE_MAKEFILE=ON \
+    -DCMAKE_MESSAGE_LOG_LEVEL=VERBOSE \
+    --log-level=VERBOSE \
+    "${extra_args[@]}" 2>&1 | tee "${build_dir}/configure_verbose.log"
 
   log "${component_name}: CMake build: ${build_dir}"
   cmake --build "${build_dir}" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
@@ -660,6 +666,60 @@ if [[ ! -f "${APPGATEWAY_SRC_DIR}/CMakeLists.txt" ]]; then
   exit 1
 fi
 
+# -----------------------------------------------------------------------------
+# Step 23a: Pre-build/install AppGateway plugin ONLY.
+#
+# Why:
+#   The L1Tests CMake currently performs a configure-time search for an *installed*
+#   AppGateway plugin .so if it cannot link against an in-build target. In a clean
+#   tree, that .so does not exist yet until after build/install. This preinstall
+#   ensures /usr/lib/wpeframework/plugins has the plugin before L1 tests configure.
+# -----------------------------------------------------------------------------
+log "[Step 23a] Pre-build/install AppGateway plugin only (for L1Tests configure-time linkage)"
+
+APPGATEWAY_PLUGINONLY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway-pluginonly"
+cmake_configure_build_install \
+  "entservices-appgateway-pluginonly" \
+  "${APPGATEWAY_SRC_DIR}" \
+  "${APPGATEWAY_PLUGINONLY_BUILD_DIR}" \
+  "${INSTALL_USR}" \
+  -DPLUGIN_APPGATEWAY=ON
+
+SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
+PLUGIN_SO=""
+
+for d in "${INSTALL_USR}/lib/wpeframework/plugins" "${INSTALL_USR}/lib64/wpeframework/plugins"; do
+  if compgen -G "${d}/*AppGateway*.so*" >/dev/null; then
+    PLUGIN_SO="$(ls -1 "${d}/"*AppGateway*.so* 2>/dev/null | head -n 1)"
+    break
+  fi
+done
+
+if [[ -z "${PLUGIN_SO}" || ! -f "${PLUGIN_SO}" ]]; then
+  err "Preinstall step failed: AppGateway plugin .so not found under ${INSTALL_USR}/{lib,lib64}/wpeframework/plugins"
+  exit 1
+fi
+
+log "[Step 23a] Copying AppGateway plugin into ${SYSTEM_PLUGIN_DIR}: ${PLUGIN_SO}"
+if is_root; then
+  mkdir -p "${SYSTEM_PLUGIN_DIR}"
+  cp -f "${PLUGIN_SO}" "${SYSTEM_PLUGIN_DIR}/"
+else
+  if have_cmd sudo; then
+    sudo -n mkdir -p "${SYSTEM_PLUGIN_DIR}"
+    sudo -n cp -f "${PLUGIN_SO}" "${SYSTEM_PLUGIN_DIR}/"
+  else
+    err "Need root/sudo to install plugin into ${SYSTEM_PLUGIN_DIR} for L1 tests."
+    exit 1
+  fi
+fi
+
+log "[Step 23a] System plugin dir listing (AppGateway-related):"
+ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
+
+# -----------------------------------------------------------------------------
+# Step 23b: Full build with L1 tests enabled (now that plugin .so is present).
+# -----------------------------------------------------------------------------
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
 # Generator args (required for: "log FULL CMake configure command (including generator)").
