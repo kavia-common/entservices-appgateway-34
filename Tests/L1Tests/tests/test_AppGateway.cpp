@@ -555,6 +555,13 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
     EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq("org.rdk.SomeHandler")))
         .WillOnce(::testing::Return(static_cast<void*>(handler)));
 
+    // AppGatewayImplementation may also try to send an internal responder message (async)
+    // via SendToLaunchDelegate(), which looks up "org.rdk.LaunchDelegate".
+    // Allow it and return nullptr (we don't validate responder behavior in this test).
+    EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq("org.rdk.LaunchDelegate")))
+        .Times(::testing::AnyNumber())
+        .WillRepeatedly(::testing::Return(nullptr));
+
     Core::Sink<AppGatewayImplementation> impl;
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&service));
 

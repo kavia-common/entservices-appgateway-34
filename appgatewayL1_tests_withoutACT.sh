@@ -913,19 +913,44 @@ log "Per request: commented/skipped for now."
 # repo's default file into /tmp and export APPGATEWAY_CONFIG_PATH so the plugin
 # can locate it without falling back to /etc.
 # -----------------------------------------------------------------------------
-log "[Step 25b] Stage AppGateway resolution.base.json from repo into writable config root"
+log "[Step 25b] Stage AppGateway resolution.base.json from repo into config root"
 
-APPGW_CFG_ROOT="/tmp/app-gateway"
 APPGW_CFG_FILE_SRC="${REPO_DIR}/AppGateway/resolutions/resolution.base.json"
-APPGW_CFG_FILE_DST="${APPGW_CFG_ROOT}/resolution.base.json"
 
-mkdir -p "${APPGW_CFG_ROOT}"
+# AppGatewayImplementation defaults to /etc/app-gateway/resolution.base.json when no
+# country-specific resolutions config is available. Prefer staging to /etc when possible
+# (root or passwordless sudo). If not possible, fall back to /tmp staging.
 if [[ -f "${APPGW_CFG_FILE_SRC}" ]]; then
-  cp -f "${APPGW_CFG_FILE_SRC}" "${APPGW_CFG_FILE_DST}"
-  log "[OK] Staged: ${APPGW_CFG_FILE_DST}"
+  if is_root; then
+    mkdir -p /etc/app-gateway
+    cp -f "${APPGW_CFG_FILE_SRC}" /etc/app-gateway/resolution.base.json
+    log "[OK] Staged: /etc/app-gateway/resolution.base.json"
+    APPGW_CFG_ROOT="/etc/app-gateway"
+  elif have_cmd sudo; then
+    # Non-interactive sudo: if it fails, we fall back to /tmp below.
+    if sudo -n true 2>/dev/null; then
+      sudo -n mkdir -p /etc/app-gateway
+      sudo -n cp -f "${APPGW_CFG_FILE_SRC}" /etc/app-gateway/resolution.base.json
+      log "[OK] Staged: /etc/app-gateway/resolution.base.json (via sudo)"
+      APPGW_CFG_ROOT="/etc/app-gateway"
+    else
+      warn "sudo is available but not passwordless; staging to /etc not possible. Falling back to /tmp."
+      APPGW_CFG_ROOT="/tmp/app-gateway"
+    fi
+  else
+    warn "Not root and sudo not available; staging to /etc not possible. Falling back to /tmp."
+    APPGW_CFG_ROOT="/tmp/app-gateway"
+  fi
+
+  if [[ "${APPGW_CFG_ROOT}" == "/tmp/app-gateway" ]]; then
+    mkdir -p "${APPGW_CFG_ROOT}"
+    cp -f "${APPGW_CFG_FILE_SRC}" "${APPGW_CFG_ROOT}/resolution.base.json"
+    log "[OK] Staged: ${APPGW_CFG_ROOT}/resolution.base.json"
+  fi
 else
   warn "Repo resolution.base.json not found at: ${APPGW_CFG_FILE_SRC}"
   warn "Tests may still fail if they rely on fallback config loading."
+  APPGW_CFG_ROOT="/tmp/app-gateway"
 fi
 
 # -----------------------------------------------------------------------------
