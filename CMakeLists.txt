@@ -21,20 +21,7 @@ cmake_minimum_required(VERSION 3.3)
 
 project(entservices_appgateway_plugins LANGUAGES C CXX)
 
-# Ensure a system-style default so plugin install ends up in:
-#   /usr/lib/wpeframework/plugins
-# unless the user/toolchain explicitly overrides CMAKE_INSTALL_PREFIX.
-if(CMAKE_INSTALL_PREFIX_INITIALIZED_TO_DEFAULT)
-    set(CMAKE_INSTALL_PREFIX "/usr" CACHE PATH "Default install prefix" FORCE)
-endif()
-
 include(GNUInstallDirs)
-
-# If dependencies (Thunder/WPEFramework) are installed into the same prefix used for this build,
-# make them discoverable without requiring callers to manually set CMAKE_PREFIX_PATH.
-# This is particularly important for scripted CI flows that install Thunder into a prefix
-# and then configure this repo with the same prefix.
-list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_INSTALL_PREFIX}")
 
 find_package(WPEFramework REQUIRED)
 
@@ -42,28 +29,16 @@ find_package(WPEFramework REQUIRED)
 # are located in the cmake directory. Include it in the search.
 list(APPEND CMAKE_MODULE_PATH "${CMAKE_SOURCE_DIR}/cmake/")
 
-# Ensure CmakeHelperFunctions (typically shipped with WPEFramework) is discoverable via include().
-if(DEFINED WPEFramework_DIR)
-    list(APPEND CMAKE_MODULE_PATH "${WPEFramework_DIR}")
-endif()
-
 # Product configuration dir
 set(PRODUCT_CONFIG_DIR "/etc/entservices")
 
-# WPEFramework uses NAMESPACE to form target names (e.g. WPEFrameworkAppGateway).
-# If the package didn't define it for some reason, default to WPEFramework.
-if(NOT DEFINED NAMESPACE)
-    set(NAMESPACE "WPEFramework")
-endif()
-
 # Library installation section
-string(TOLOWER ${NAMESPACE} STORAGE_DIRECTORY)
-
-# Centralize plugin install directory. This is relative to CMAKE_INSTALL_PREFIX unless set to an absolute path.
-# Default resolves to:
-#   ${CMAKE_INSTALL_PREFIX}/${CMAKE_INSTALL_LIBDIR}/wpeframework/plugins
+#
+# Keep install destination consistent and system-compatible:
+#   - relative to CMAKE_INSTALL_PREFIX (so prefix=/usr => /usr/lib/wpeframework/plugins)
+#   - independent of NAMESPACE to avoid accidental /usr/lib/thunder/... etc
 set(WPEFRAMEWORK_PLUGIN_INSTALL_DIR
-    "${CMAKE_INSTALL_LIBDIR}/${STORAGE_DIRECTORY}/plugins"
+    "${CMAKE_INSTALL_LIBDIR}/wpeframework/plugins"
     CACHE PATH "Install directory for WPEFramework plugin shared libraries (relative to CMAKE_INSTALL_PREFIX unless absolute)."
 )
 
@@ -100,7 +75,6 @@ endif()
 if(PLUGIN_APPGATEWAYCOMMON)
     add_subdirectory(AppGatewayCommon)
 endif()
-
 
 if(WPEFRAMEWORK_CREATE_IPKG_TARGETS)
     set(CPACK_GENERATOR "DEB")
