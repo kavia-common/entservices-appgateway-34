@@ -182,8 +182,6 @@ if(RDK_SERVICES_L1_TEST)
     target_link_options(${MODULE_NAME} PRIVATE "-Wl,-wrap,opendir")
 endif(RDK_SERVICES_L1_TEST)
 
-include_directories(${TEST_INC})
-
 target_link_directories(${MODULE_NAME} PUBLIC
     ${CMAKE_INSTALL_PREFIX}/lib
     ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
@@ -193,6 +191,8 @@ target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
 target_include_directories(${MODULE_NAME}
     PUBLIC
+    ${TEST_INC}
+    ${CMAKE_INSTALL_PREFIX}/include
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include>
     ${CMAKE_SOURCE_DIR}/Tests/mocks
@@ -226,6 +226,7 @@ if(PLUGIN_APPGATEWAY)
 
     target_link_libraries(AppGatewayL1Test PRIVATE
         ${APPGATEWAY_L1TEST_LIB}
+        gmock
         gtest
         gtest_main
         pthread

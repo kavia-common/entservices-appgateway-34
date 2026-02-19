@@ -731,6 +731,7 @@ L1TESTS_ONLY_CMAKE_ARGS=(
   # ONLY Tests/L1Tests (no full install of entservices-appgateway).
   -DWPEFrameworkPlugins_DIR="${INSTALL_USR}/lib/cmake/WPEFrameworkPlugins"
   -DRDK_SERVICES_L1_TEST=ON
+  # Build the plugin sources so the required .so files are produced
   -DPLUGIN_APPGATEWAY=ON
   -DPLUGIN_APPGATEWAYCOMMON=OFF
   -DPLUGIN_APPNOTIFICATIONS=OFF
@@ -752,26 +753,21 @@ cmake_configure_build_noinstall \
   "${L1TESTS_ONLY_CMAKE_ARGS[@]}"
 
 # Stage required plugin shared libraries built as part of the L1Tests-only build.
-#
-# Important: We do not run any `cmake --install` for entservices-appgateway here,
-# because installs attempt to write under /etc in some environments. Instead, we
-# copy the built .so artifacts into the local install prefix plugin directory
-# that the test runner uses via LD_LIBRARY_PATH.
+# This is critical: runtime loads the AppGateway plugin .so and the L1TestsIN module .so.
 LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
 mkdir -p "${LOCAL_PLUGIN_DIR}"
 
-stage_plugin_so_from_dir() {
+stage_plugin_so_from_glob() {
   local src_glob="$1"
   local desc="$2"
 
+  # Use eval so callers can pass quoted globs safely.
   local so_path=""
-  if compgen -G ${src_glob} >/dev/null; then
-    so_path="$(ls -1 ${src_glob} 2>/dev/null | head -n 1)"
-  fi
+  so_path="$(eval "ls -1 ${src_glob} 2>/dev/null | head -n 1" || true)"
 
   if [[ -z "${so_path}" || ! -f "${so_path}" ]]; then
     err "Step 23 did not produce ${desc} .so at expected location."
-    err "Checked: ${src_glob}"
+    err "Checked glob: ${src_glob}"
     exit 1
   fi
 
@@ -779,11 +775,11 @@ stage_plugin_so_from_dir() {
   log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/$(basename "${so_path}")"
 }
 
-# AppGateway plugin
-stage_plugin_so_from_dir "${APPGATEWAY_BUILD_DIR}/AppGateway/"'*.so*' "AppGateway plugin"
+# AppGateway plugin (built as part of the L1Tests-only build dependency graph)
+stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/AppGateway/*.so*\"" "AppGateway plugin"
 
 # L1TestsIN plugin module (built from Tests/L1Tests add_library(${MODULE_NAME} ...))
-stage_plugin_so_from_dir "${APPGATEWAY_BUILD_DIR}/"'*.so*' "L1TestsIN test module"
+stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/*.so*\"" "L1TestsIN test module"
 
 ls -la "${LOCAL_PLUGIN_DIR}/"*.so* 2>/dev/null || true
 
