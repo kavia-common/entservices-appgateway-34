@@ -1,0 +1,9 @@
+libdir=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/lib
+includedir=/home/kavia/workspace/code-generation/entservices-appgateway-34/install/usr/include
+
+Name: gtest
+Description: GoogleTest (without main() function)
+Version: 1.15.0
+URL: https://github.com/google/googletest
+Libs: -L${libdir} -lgtest 
+Cflags: -I${includedir} -DGTEST_HAS_PTHREAD=1

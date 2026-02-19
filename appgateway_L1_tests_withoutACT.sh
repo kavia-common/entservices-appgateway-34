@@ -634,13 +634,17 @@ else
   warn "Googletest dir not found at ${GTEST_DIR}; skipping build."
 fi
 
-log "[Step 22] Build mocks (NOT REQUIRED FOR NOW - SKIPPED)"
-log "Per request: step 22 is not required for now."
+# -----------------------------------------------------------------------------
+# [Step 22] Build mocks
+# -----------------------------------------------------------------------------
+# Per request: Step 22 is commented out (not required for now).
+# log "[Step 22] Build mocks (COMMENTED OUT - not required for now)"
+# log "Per request: step 22 is not required for now."
 
 # -----------------------------------------------------------------------------
-# Step 23: Build entservices-appgateway (REQUIRED)
+# Step 23: Build entservices-appgateway (configure/build/install; MUST build plugin .so)
 # -----------------------------------------------------------------------------
-log "[Step 23] Build entservices-appgateway (two-phase: install plugin first, then build/install L1 tests against installed plugin)"
+log "[Step 23] Build entservices-appgateway (configure/build/install with -DRDK_SERVICES_L1_TEST=ON -DPLUGIN_APPGATEWAY=ON)"
 
 # IMPORTANT:
 # Step 23 MUST configure from the entservices-appgateway-34 repository root (this repo),
@@ -656,10 +660,9 @@ if [[ ! -f "${APPGATEWAY_SRC_DIR}/CMakeLists.txt" ]]; then
   exit 1
 fi
 
-APPGATEWAY_BUILD_DIR_PLUGIN="${BUILD_ROOT}/entservices-appgateway-plugin"
-APPGATEWAY_BUILD_DIR_TESTS="${BUILD_ROOT}/entservices-appgateway-tests"
+APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
-# Generator args (for logging parity with workflow requirements).
+# Generator args (required for: "log FULL CMake configure command (including generator)").
 APPGW_CMAKE_GENERATOR_ARGS=()
 if have_cmd ninja; then
   APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
@@ -667,47 +670,44 @@ else
   APPGW_CMAKE_GENERATOR_ARGS=(-G "Unix Makefiles")
 fi
 
-# ---------------------------
-# Phase A: Build+install plugin only
-# ---------------------------
-EXTRA_APPGW_PLUGIN_CMAKE_ARGS=(
-  # Build/install the plugin .so
+EXTRA_APPGW_CMAKE_ARGS=(
+  -DRDK_SERVICES_L1_TEST=ON
   -DPLUGIN_APPGATEWAY=ON
-
-  # Do not enable L1 tests in this phase; ensures plugin installs first
-  -DRDK_SERVICES_L1_TEST=OFF
 )
 
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-  EXTRA_APPGW_PLUGIN_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+  EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
 
 (
-  printf '==> entservices-appgateway (plugin phase): Full CMake configure command: '
+  printf '==> entservices-appgateway: Full CMake configure command: '
   printf 'cmake'
   for a in "${APPGW_CMAKE_GENERATOR_ARGS[@]}"; do
     printf ' %q' "${a}"
   done
   printf ' -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
     "${APPGATEWAY_SRC_DIR}" \
-    "${APPGATEWAY_BUILD_DIR_PLUGIN}" \
+    "${APPGATEWAY_BUILD_DIR}" \
     "${INSTALL_USR}"
-  for a in "${EXTRA_APPGW_PLUGIN_CMAKE_ARGS[@]}"; do
+  for a in "${EXTRA_APPGW_CMAKE_ARGS[@]}"; do
     printf ' %q' "${a}"
   done
   printf '\n'
 )
 
 cmake_configure_build_install \
-  "entservices-appgateway(plugin)" \
+  "entservices-appgateway" \
   "${APPGATEWAY_SRC_DIR}" \
-  "${APPGATEWAY_BUILD_DIR_PLUGIN}" \
+  "${APPGATEWAY_BUILD_DIR}" \
   "${INSTALL_USR}" \
-  "${EXTRA_APPGW_PLUGIN_CMAKE_ARGS[@]}"
+  "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
 # -----------------------------------------------------------------------------
-# Verification: ensure expected plugin .so files are available after install.
+# Step 24: Verify plugin .so is available and install/copy it where L1 tests expect it.
+# Also copy required mock headers into install include (so builds can find them via prefix).
 # -----------------------------------------------------------------------------
+log "[Step 24] Verify AppGateway plugin .so and copy required mocks"
+
 EXPECTED_PLUGIN_NAMES=(
   "AppGateway"
 )
@@ -732,8 +732,8 @@ if [[ -z "${INSTALL_PLUGIN_DIR}" ]]; then
   exit 1
 fi
 
-log "[Step 23] Installed plugin directory: ${INSTALL_PLUGIN_DIR}"
-log "[Step 23] Installed plugins listing:"
+log "[Step 24] Installed plugin directory: ${INSTALL_PLUGIN_DIR}"
+log "[Step 24] Installed plugins listing:"
 ls -la "${INSTALL_PLUGIN_DIR}" || true
 
 for plugin_name in "${EXPECTED_PLUGIN_NAMES[@]}"; do
@@ -744,31 +744,26 @@ for plugin_name in "${EXPECTED_PLUGIN_NAMES[@]}"; do
   fi
 done
 
-log "[OK] Expected plugin .so files are present under install prefix."
-
-# -----------------------------------------------------------------------------
-# Copy required plugin into the system plugin directory used by the L1 tests.
-# -----------------------------------------------------------------------------
-SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
-
 APPGW_PLUGIN_SRC=""
 if compgen -G "${INSTALL_PLUGIN_DIR}/*AppGateway*.so*" >/dev/null; then
   APPGW_PLUGIN_SRC="$(ls -1 "${INSTALL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null | head -n 1)"
 fi
 
 if [[ -z "${APPGW_PLUGIN_SRC}" || ! -f "${APPGW_PLUGIN_SRC}" ]]; then
-  err "Step 23 did not produce/locate an AppGateway plugin .so under install prefix plugin dir: ${INSTALL_PLUGIN_DIR}"
+  err "Step 24 did not locate an AppGateway plugin .so under: ${INSTALL_PLUGIN_DIR}"
   err "Expected a file matching: ${INSTALL_PLUGIN_DIR}/*AppGateway*.so*"
-  err "Check build output under: ${APPGATEWAY_BUILD_DIR_PLUGIN}"
+  err "Check build output under: ${APPGATEWAY_BUILD_DIR}"
   exit 1
 fi
 
 log "[OK] Located AppGateway plugin .so at: ${APPGW_PLUGIN_SRC}"
 ls -la "${APPGW_PLUGIN_SRC}" || true
 
+# Copy plugin .so into system dir expected by runtime loader in this workflow.
+SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
 SYSTEM_PLUGIN_SO_PATH="${SYSTEM_PLUGIN_DIR}/$(basename "${APPGW_PLUGIN_SRC}")"
 
-log "[Step 23] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_SO_PATH}"
+log "[Step 24] Installing/copying AppGateway plugin into ${SYSTEM_PLUGIN_SO_PATH}"
 if is_root; then
   mkdir -p "${SYSTEM_PLUGIN_DIR}"
   cp -f "${APPGW_PLUGIN_SRC}" "${SYSTEM_PLUGIN_SO_PATH}"
@@ -792,50 +787,16 @@ fi
 log "[OK] System plugin dir now contains (AppGateway-related):"
 ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
 
-# ---------------------------
-# Phase B: Build+install L1 tests against the installed plugin
-# ---------------------------
-EXTRA_APPGW_TESTS_CMAKE_ARGS=(
-  -DRDK_SERVICES_L1_TEST=ON
+# Copy required mock headers into the install prefix (so include discovery works via ${INSTALL_USR}/include).
+MOCKS_SRC_DIR="${REPO_DIR}/Tests/mocks"
+MOCKS_DST_DIR="${INSTALL_USR}/include/Tests/mocks"
+mkdir -p "${MOCKS_DST_DIR}"
+cp -f "${MOCKS_SRC_DIR}/Module.h" "${MOCKS_DST_DIR}/Module.h"
+cp -f "${MOCKS_SRC_DIR}/ServiceMock.h" "${MOCKS_DST_DIR}/ServiceMock.h"
+cp -f "${MOCKS_SRC_DIR}/ThunderPortability.h" "${MOCKS_DST_DIR}/ThunderPortability.h"
+log "[OK] Mock headers copied to: ${MOCKS_DST_DIR}"
 
-  # In this phase, we only need tests; they link against the installed plugin .so.
-  -DPLUGIN_APPGATEWAY=OFF
-)
-
-if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-  EXTRA_APPGW_TESTS_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
-fi
-
-(
-  printf '==> entservices-appgateway (tests phase): Full CMake configure command: '
-  printf 'cmake'
-  for a in "${APPGW_CMAKE_GENERATOR_ARGS[@]}"; do
-    printf ' %q' "${a}"
-  done
-  printf ' -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
-    "${APPGATEWAY_SRC_DIR}" \
-    "${APPGATEWAY_BUILD_DIR_TESTS}" \
-    "${INSTALL_USR}"
-  for a in "${EXTRA_APPGW_TESTS_CMAKE_ARGS[@]}"; do
-    printf ' %q' "${a}"
-  done
-  printf '\n'
-)
-
-cmake_configure_build_install \
-  "entservices-appgateway(tests)" \
-  "${APPGATEWAY_SRC_DIR}" \
-  "${APPGATEWAY_BUILD_DIR_TESTS}" \
-  "${INSTALL_USR}" \
-  "${EXTRA_APPGW_TESTS_CMAKE_ARGS[@]}"
-
-# Keep downstream steps working (Step 26/28 reference APPGATEWAY_BUILD_DIR).
-APPGATEWAY_BUILD_DIR="${APPGATEWAY_BUILD_DIR_TESTS}"
-
-log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
-log "Per request: step 24 is not required for now."
-
-log "[DONE] Steps 1–24 completed (as applicable in this container; steps 22 and 24 skipped per request)."
+log "[DONE] Steps 1–24 completed (Step 22 commented out per request)."
 
 log "[Step 25] Set up files (COMMENTED - enable if tests require these paths/device nodes)"
 log "Per request: commented/skipped for now."
