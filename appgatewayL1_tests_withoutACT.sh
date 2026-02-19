@@ -835,37 +835,10 @@ stage_all_plugins_from_dir_best_effort() {
   fi
 }
 
-stage_plugin_with_expected_name() {
-  local src_glob="$1"
-  local desc="$2"
-  local expected_basename="$3"
-
-  # Use eval so callers can pass quoted globs safely.
-  local so_path=""
-  so_path="$(eval "ls -1 ${src_glob} 2>/dev/null | head -n 1" || true)"
-
-  if [[ -z "${so_path}" || ! -f "${so_path}" ]]; then
-    err "Step 23 did not produce ${desc} .so at expected location."
-    err "Checked glob: ${src_glob}"
-    exit 1
-  fi
-
-  # Stage the artifact as-is (useful for debugging / direct linkage).
-  cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/"
-
-  # Also stage using the expected WPEFramework plugin naming if different.
-  if [[ -n "${expected_basename}" ]]; then
-    cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/${expected_basename}"
-    log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/${expected_basename} (from $(basename "${so_path}"))"
-  else
-    log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/$(basename "${so_path}")"
-  fi
-}
-
-# Build output layout (per attached logs):
+# Build output layout:
 #   - <build>/AppGateway/libAppGateway.so
 #   - <build>/AppGatewayCommon/libAppGatewayCommon.so
-#   - <build>/*.so  (L1TestsIN module)
+#   - <build>/*.so  (L1TestsIN module, if enabled)
 #   - <build>/AppNotifications/... (optional)
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGateway" "AppGateway"
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGatewayCommon" "AppGatewayCommon"
@@ -873,12 +846,12 @@ stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGatewayCommon
 # AppNotifications staging is best-effort (never fatal in default flow)
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppNotifications" "AppNotifications"
 
-# Hard requirements: stage and validate AppGateway + AppGatewayCommon into the STAGING dir.
-# (The previous failure was caused by validating the build-tree path, even though staging succeeded.)
-stage_plugin_with_expected_name "\"${APPGATEWAY_BUILD_DIR}/AppGateway/libAppGateway.so*\"" "AppGateway plugin" "libWPEFrameworkAppGateway.so"
+# Hard requirements: stage and validate AppGateway + AppGatewayCommon into the staging dir
+# using their REAL built names (no renaming).
+stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/AppGateway/libAppGateway.so*\"" "AppGateway plugin"
 stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/AppGatewayCommon/libAppGatewayCommon.so*\"" "AppGatewayCommon plugin"
 
-# L1TestsIN plugin module (hard requirement; built from Tests/L1Tests add_library(${MODULE_NAME} ...))
+# L1TestsIN plugin module (hard requirement when produced by the build)
 stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/*.so*\"" "L1TestsIN test module"
 
 # Final validation should check what runtime will use: the staged plugin directory.
@@ -944,9 +917,9 @@ log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for
 
   # Ensure plugin and libraries are discoverable at runtime.
   # Include:
-  #  - install/usr/lib
-  #  - install/usr/lib/wpeframework/plugins (local plugin staging)
-  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+  #  - install/usr/lib (+ lib64 on some distros)
+  #  - install/usr/lib/wpeframework/plugins (local plugin staging, real .so names)
+  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib64:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
 
   export GTEST_OUTPUT="json:$(pwd)/AppGatewayL1TestResults.json"
 
