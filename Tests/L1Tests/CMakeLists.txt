@@ -24,15 +24,34 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(${NAMESPACE}Plugins REQUIRED)
 
-set (TEST_SRC
+set(TEST_SRC
     tests/test_UtilsFile.cpp
 )
 
-set (TEST_LIB
+set(TEST_LIB
     ${NAMESPACE}Plugins::${NAMESPACE}Plugins
 )
 
-set (TEST_INC ../../helpers)
+set(TEST_INC ../../helpers)
+
+# -----------------------------------------------------------------------------
+# AppGateway-specific L1 tests
+#
+# Requirement:
+#   Compile Tests/L1Tests/tests/test_AppGateway.cpp when AppGateway plugin is enabled.
+#
+# Control mechanism:
+#   The script/workflow passes -DPLUGIN_APPGATEWAY=ON, and the top-level project
+#   already uses PLUGIN_APPGATEWAY to add_subdirectory(AppGateway).
+#   We reuse the same option here to conditionally include the L1 test.
+# -----------------------------------------------------------------------------
+if(PLUGIN_APPGATEWAY)
+    message(STATUS "AppGateway L1 tests: ENABLED (PLUGIN_APPGATEWAY=ON)")
+    list(APPEND TEST_SRC tests/test_AppGateway.cpp)
+    list(APPEND TEST_INC ../../AppGateway ../../AppGatewayCommon)
+else()
+    message(STATUS "AppGateway L1 tests: DISABLED (set -DPLUGIN_APPGATEWAY=ON to enable)")
+endif()
 
 #########################################################################################
 # add_plugin_test_ex: Macro to add plugin tests, it will append to TEST_SRC, TEST_INC,
@@ -41,7 +60,7 @@ set (TEST_INC ../../helpers)
 #                     arg2: include dir list as **string**
 #                     arg3: plugin libs to link list as **string**
 #
-# sample invocation : 
+# sample invocation :
 #    add_plugin_test_ex(PLUGIN_NAME
 #                       "test/file1.cpp;test/file2.cpp"
 #                       "../../inc_dir1;../../inc_dir2"
@@ -103,31 +122,30 @@ endmacro()
 
 add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
-if (RDK_SERVICES_L1_TEST)
+if(RDK_SERVICES_L1_TEST)
     target_link_options(${MODULE_NAME} PRIVATE "-Wl,-wrap,opendir")
-endif (RDK_SERVICES_L1_TEST)
+endif(RDK_SERVICES_L1_TEST)
 
 include_directories(${TEST_INC})
 
-target_link_directories(${MODULE_NAME} PUBLIC ${CMAKE_INSTALL_PREFIX}/lib ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins)
+target_link_directories(${MODULE_NAME} PUBLIC
+    ${CMAKE_INSTALL_PREFIX}/lib
+    ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+)
 
 target_link_libraries(${MODULE_NAME} ${TEST_LIB})
 
 target_include_directories(${MODULE_NAME}
-        PUBLIC
-        $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
-        $<INSTALL_INTERFACE:include>
-        ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks
-        ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/devicesettings
-        ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/thunder
-        ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
-        )
+    PUBLIC
+    $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
+    $<INSTALL_INTERFACE:include>
+    ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks
+    ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/devicesettings
+    ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/thunder
+    ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+)
 
 target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
 
-#install(TARGETS ${PROJECT_NAME} DESTINATION bin)
-
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
 write_config(${PLUGIN_NAME})
-
-
