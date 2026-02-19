@@ -63,6 +63,13 @@ if(PLUGIN_APPGATEWAYCOMMON)
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../AppGatewayCommon ${CMAKE_BINARY_DIR}/AppGatewayCommon)
 endif()
 
+# In an L1Tests-only configure, the top-level (repo root) CMakeLists.txt is not
+# executed, so its `add_definitions(-DDISABLE_SECURITY_TOKEN)` would not run.
+# Apply the requested compile define globally from this entry point instead.
+if(DISABLE_SECURITY_TOKEN)
+    add_definitions(-DDISABLE_SECURITY_TOKEN)
+endif()
+
 # -----------------------------------------------------------------------------
 # Thunder interface selection
 #
@@ -321,6 +328,13 @@ if(PLUGIN_APPGATEWAY)
     target_link_directories(AppGatewayL1Test PRIVATE
         ${CMAKE_INSTALL_PREFIX}/lib
         ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+
+        # In our CI flow, dependencies are installed into <repo>/install/usr, while
+        # the L1Tests-only build sets CMAKE_INSTALL_PREFIX to /usr/local by default.
+        # The AppGateway plugin .so is located under:
+        #   <repo>/install/usr/lib/wpeframework/plugins
+        # so add that path explicitly for reliable -lWPEFrameworkAppGateway resolution.
+        ${CMAKE_CURRENT_LIST_DIR}/../../install/usr/lib/wpeframework/plugins
     )
 
     target_link_libraries(AppGatewayL1Test PRIVATE
