@@ -300,12 +300,16 @@ cmake_configure_build_install() {
     return 0
   fi
 
+  # Always specify the generator explicitly so logs and configuration are deterministic.
+  # This also ensures "full configure command (including generator)" requirements are met.
   local -a gen_args=()
   if have_cmd ninja; then
     gen_args=(-G Ninja)
+  else
+    gen_args=(-G "Unix Makefiles")
   fi
 
-  log "${component_name}: CMake configure: -S ${src_dir} -B ${build_dir} -DCMAKE_INSTALL_PREFIX=${install_prefix}"
+  log "${component_name}: CMake configure: cmake ${gen_args[*]} -S ${src_dir} -B ${build_dir} -DCMAKE_INSTALL_PREFIX=${install_prefix}"
   cmake "${gen_args[@]}" -S "${src_dir}" -B "${build_dir}" \
     -DCMAKE_BUILD_TYPE=Debug \
     -DCMAKE_INSTALL_PREFIX="${install_prefix}" \
@@ -636,7 +640,21 @@ log "Per request: step 22 is not required for now."
 log "[Step 23] Build entservices-appgateway (configure/build/install with coverage flags, RDK_SERVICES_L1_TEST=ON)"
 
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
+
+# IMPORTANT:
+# Step 23 MUST configure from the entservices-appgateway-34 repository root (this repo),
+# NOT from the overall workspace root. The authoritative failure was:
+#   CMake Error: The source directory "/home/kavia/workspace/code-generation" does not appear to contain CMakeLists.txt.
 APPGATEWAY_SRC_DIR="${REPO_DIR}"
+if have_cmd git && [[ -d "${REPO_DIR}/.git" ]]; then
+  APPGATEWAY_SRC_DIR="$(git -C "${REPO_DIR}" rev-parse --show-toplevel 2>/dev/null || echo "${REPO_DIR}")"
+fi
+
+if [[ ! -f "${APPGATEWAY_SRC_DIR}/CMakeLists.txt" ]]; then
+  err "Step 23 source dir does not contain CMakeLists.txt: ${APPGATEWAY_SRC_DIR}"
+  err "This must point at the entservices-appgateway-34 repo root."
+  exit 1
+fi
 
 EXTRA_APPGW_CMAKE_ARGS=(
   -DRDK_SERVICES_L1_TEST=ON
@@ -649,10 +667,12 @@ if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
 
-# Log full configure command used.
+# Log full configure command used (including generator).
 APPGW_CMAKE_GENERATOR_ARGS=()
 if have_cmd ninja; then
   APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
+else
+  APPGW_CMAKE_GENERATOR_ARGS=(-G "Unix Makefiles")
 fi
 
 (
@@ -678,28 +698,62 @@ cmake_configure_build_install \
   "${INSTALL_USR}" \
   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
-# Ensure plugin is present in install prefix, then copy to /usr/lib/wpeframework/plugins
-SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
-
-PLUGIN_CANDIDATES=(
-  "${INSTALL_USR}/lib/wpeframework/plugins/"*AppGateway*.so
-  "${INSTALL_USR}/usr/lib/wpeframework/plugins/"*AppGateway*.so
-  "${INSTALL_USR}/lib/"*/plugins/*AppGateway*.so
+# -----------------------------------------------------------------------------
+# Verification: ensure expected plugin .so files are available after build/install.
+# -----------------------------------------------------------------------------
+EXPECTED_PLUGIN_NAMES=(
+  "AppGateway"
 )
 
-APPGW_PLUGIN_SRC=""
-for candidate in "${PLUGIN_CANDIDATES[@]}"; do
-  if ls ${candidate} >/dev/null 2>&1; then
-    APPGW_PLUGIN_SRC="$(ls -1 ${candidate} 2>/dev/null | head -n 1)"
+INSTALL_PLUGIN_DIR=""
+INSTALL_PLUGIN_DIR_CANDIDATES=(
+  "${INSTALL_USR}/lib/wpeframework/plugins"
+  "${INSTALL_USR}/lib64/wpeframework/plugins"
+)
+
+for d in "${INSTALL_PLUGIN_DIR_CANDIDATES[@]}"; do
+  if [[ -d "${d}" ]]; then
+    INSTALL_PLUGIN_DIR="${d}"
     break
   fi
 done
 
+if [[ -z "${INSTALL_PLUGIN_DIR}" ]]; then
+  err "No install plugin directory found under install prefix: ${INSTALL_USR}"
+  err "Checked:"
+  printf '  - %s\n' "${INSTALL_PLUGIN_DIR_CANDIDATES[@]}" >&2
+  exit 1
+fi
+
+log "[Step 23] Installed plugin directory: ${INSTALL_PLUGIN_DIR}"
+log "[Step 23] Installed plugins listing:"
+ls -la "${INSTALL_PLUGIN_DIR}" || true
+
+for plugin_name in "${EXPECTED_PLUGIN_NAMES[@]}"; do
+  if ! compgen -G "${INSTALL_PLUGIN_DIR}/*${plugin_name}*.so*" >/dev/null; then
+    err "Expected plugin .so missing after install: ${plugin_name}"
+    err "Expected a match for pattern: ${INSTALL_PLUGIN_DIR}/*${plugin_name}*.so*"
+    exit 1
+  fi
+done
+
+log "[OK] Expected plugin .so files are present under install prefix."
+
+# -----------------------------------------------------------------------------
+# Copy required plugin into the system plugin directory used by the L1 tests.
+# -----------------------------------------------------------------------------
+SYSTEM_PLUGIN_DIR="/usr/lib/wpeframework/plugins"
+
+# Select the AppGateway plugin .so from the install prefix.
+APPGW_PLUGIN_SRC=""
+if compgen -G "${INSTALL_PLUGIN_DIR}/*AppGateway*.so*" >/dev/null; then
+  APPGW_PLUGIN_SRC="$(ls -1 "${INSTALL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null | head -n 1)"
+fi
+
 if [[ -z "${APPGW_PLUGIN_SRC}" || ! -f "${APPGW_PLUGIN_SRC}" ]]; then
-  err "Step 23 did not produce/locate an AppGateway plugin .so under: ${INSTALL_USR}"
-  err "Searched candidates:"
-  printf '  - %s\n' "${PLUGIN_CANDIDATES[@]}" >&2
-  err "Expected because -DPLUGIN_APPGATEWAY=ON was set. Check build output under: ${APPGATEWAY_BUILD_DIR}"
+  err "Step 23 did not produce/locate an AppGateway plugin .so under install prefix plugin dir: ${INSTALL_PLUGIN_DIR}"
+  err "Expected a file matching: ${INSTALL_PLUGIN_DIR}/*AppGateway*.so*"
+  err "Check build output under: ${APPGATEWAY_BUILD_DIR}"
   exit 1
 fi
 
@@ -724,7 +778,12 @@ else
   fi
 fi
 
-log "[OK] System plugin dir now contains:"
+if [[ ! -f "${SYSTEM_PLUGIN_SO_PATH}" ]]; then
+  err "Plugin copy verification failed; missing: ${SYSTEM_PLUGIN_SO_PATH}"
+  exit 1
+fi
+
+log "[OK] System plugin dir now contains (AppGateway-related):"
 ls -la "${SYSTEM_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || ls -la "${SYSTEM_PLUGIN_DIR}" || true
 
 log "[Step 24] Build entservices-testframework (NOT REQUIRED FOR NOW - SKIPPED)"
