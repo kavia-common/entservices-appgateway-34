@@ -17,6 +17,16 @@
 
 cmake_minimum_required(VERSION 3.8)
 
+# ---------------------------------------------------------------------------
+# Package discovery shim for L1Tests-only builds
+#
+# When configuring only Tests/L1Tests, plugin subdirectories (e.g. AppGateway)
+# can call find_package(Plugins) (empty NAMESPACE). Thunder's canonical package
+# name is WPEFrameworkPlugins, so we provide a local "Plugins" config shim
+# under Tests/L1Tests/cmake and ensure CMake can find it.
+# ---------------------------------------------------------------------------
+list(PREPEND CMAKE_PREFIX_PATH "${CMAKE_CURRENT_LIST_DIR}/cmake")
+
 # -----------------------------------------------------------------------------
 # L1Tests build products
 #
