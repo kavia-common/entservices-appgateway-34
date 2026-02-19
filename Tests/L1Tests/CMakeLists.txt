@@ -31,6 +31,28 @@ set(CMAKE_CXX_STANDARD 14)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 # -----------------------------------------------------------------------------
+# L1Tests-only configure support
+#
+# In the CI workflow we configure ONLY this directory:
+#   cmake -S <repo>/Tests/L1Tests -B <build> ...
+#
+# Therefore, any plugin implementation we need for linkage must be pulled in
+# explicitly from here.
+# -----------------------------------------------------------------------------
+if(PLUGIN_APPGATEWAY)
+    # AppGateway/CMakeLists.txt defines the implementation library target
+    #   WPEFrameworkAppGateway
+    # which AppGatewayL1Test must link against to resolve symbols.
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../AppGateway ${CMAKE_BINARY_DIR}/AppGateway)
+endif()
+
+if(PLUGIN_APPGATEWAYCOMMON)
+    # Also allow building/staging AppGatewayCommon plugin shared library from
+    # the same L1Tests-only build when requested.
+    add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../AppGatewayCommon ${CMAKE_BINARY_DIR}/AppGatewayCommon)
+endif()
+
+# -----------------------------------------------------------------------------
 # Thunder interface selection
 #
 # The L1Tests build (and especially the mocks in Tests/mocks) must match the
@@ -114,8 +136,16 @@ if(PLUGIN_APPGATEWAY)
         ../../AppGatewayCommon
     )
 
-    # Libraries: link against the plugin collection to satisfy Thunder symbols used in tests.
+    # Libraries:
+    #  - Link against the AppGateway implementation itself to resolve symbols used by the tests
+    #    (Resolver, AppGatewayImplementation, etc.)
+    #  - Also link against the Thunder Plugins collection for core Thunder symbols.
+    #
+    # Note: In the L1Tests-only build (Step 23), PLUGIN_APPGATEWAY is ON but the
+    # AppGateway subdirectory is *not* necessarily added unless we do it explicitly
+    # from the Tests/L1Tests configuration (see below).
     list(APPEND APPGATEWAY_L1TEST_LIB
+        WPEFrameworkAppGateway
         ${NAMESPACE}Plugins::${NAMESPACE}Plugins
     )
 else()

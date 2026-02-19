@@ -739,7 +739,7 @@ L1TESTS_ONLY_CMAKE_ARGS=(
 
   # Build the plugin sources so the required .so files are produced
   -DPLUGIN_APPGATEWAY=ON
-  -DPLUGIN_APPGATEWAYCOMMON=OFF
+  -DPLUGIN_APPGATEWAYCOMMON=ON
   -DPLUGIN_APPNOTIFICATIONS=OFF
 
   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
@@ -766,7 +766,9 @@ log "Step 23: Ensuring required .so artifacts are built (AppGateway + L1TestsIN)
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target AppGatewayL1Test -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)"
 # Best-effort: L1TestsIN may be skipped if no legacy sources are enabled; AppGateway plugin should exist.
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "WPEFrameworkAppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+cmake --build "${APPGATEWAY_BUILD_DIR}" --target "WPEFrameworkAppGatewayCommon" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGatewayCommon" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "L1TestsIN" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 
 # Stage required plugin shared libraries built as part of the L1Tests-only build.
