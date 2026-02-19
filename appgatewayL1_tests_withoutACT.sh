@@ -1,6 +1,13 @@
 #!/usr/bin/env bash
 set -euo pipefail
 
+# Ensure we still generate coverage even if the L1 test binary fails.
+# We'll capture the test exit code and defer failing the script until after
+# coverage generation has run.
+TEST_EXIT_CODE=0
+COVERAGE_EXIT_CODE=0
+COVERAGE_HTML_INDEX=""
+
 # -----------------------------------------------------------------------------
 # appgatewayL1_tests_withoutACT.sh
 #
@@ -1014,17 +1021,43 @@ find "${APPGATEWAY_BUILD_DIR}" -type f -name "*.gcda" -print -delete 2>/dev/null
   fi
 
   log "Running L1 test binary: ${TEST_BIN}"
+  set +e
   "${TEST_BIN}"
+  TEST_EXIT_CODE=$?
+  set -e
 
-  cp -f "$(pwd)/AppGatewayL1TestResults.json" "${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
-  rm -f "$(pwd)/AppGatewayL1TestResults.json"
+  # Preserve test results if present, even on failure.
+  if [[ -f "$(pwd)/AppGatewayL1TestResults.json" ]]; then
+    cp -f "$(pwd)/AppGatewayL1TestResults.json" "${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
+    rm -f "$(pwd)/AppGatewayL1TestResults.json"
+  else
+    warn "GTEST_OUTPUT json file not found; skipping results copy."
+  fi
+
+  # Make the captured exit code visible outside the subshell.
+  echo "${TEST_EXIT_CODE}" > "${REPO_DIR}/.appgateway_l1_test_exit_code"
 )
+# Recover test exit code from the subshell (default to 0 if missing).
+if [[ -f "${REPO_DIR}/.appgateway_l1_test_exit_code" ]]; then
+  TEST_EXIT_CODE="$(cat "${REPO_DIR}/.appgateway_l1_test_exit_code" 2>/dev/null || echo 0)"
+  rm -f "${REPO_DIR}/.appgateway_l1_test_exit_code" || true
+else
+  TEST_EXIT_CODE=0
+fi
+
+if [[ "${TEST_EXIT_CODE}" -ne 0 ]]; then
+  warn "Step 26: L1 tests finished with failures (exit code: ${TEST_EXIT_CODE}). Coverage generation will still run."
+else
+  log "[OK] Step 26: L1 tests passed."
+fi
+
 log "[OK] Step 26 complete: ${REPO_DIR}/AppGatewayL1TestResultsWithoutValgrind.json"
 
 # -----------------------------------------------------------------------------
 # Step 28: Generate coverage HTML report (AppGateway-only)
 # -----------------------------------------------------------------------------
 log "[Step 28] Generate coverage HTML report (AppGateway sources only)"
+set +e
 
 LCOVRC_SRC_1="${REPO_DIR}/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
 LCOVRC_SRC_2="${WORKSPACE_ROOT}/networkmanager-34/entservices-testframework/Tests/L1Tests/.lcovrc_l1"
@@ -1042,42 +1075,73 @@ fi
 if [[ ! -d "${APPGATEWAY_BUILD_DIR}" ]]; then
   err "AppGateway build dir not found for coverage capture: ${APPGATEWAY_BUILD_DIR}"
   err "Step 23 should have built this repo with coverage flags into that directory."
-  exit 1
+  COVERAGE_EXIT_CODE=2
+else
+  COVERAGE_DIR="${REPO_DIR}/coverage"
+  COVERAGE_INFO="${REPO_DIR}/coverage.info"
+  FILTERED_INFO="${REPO_DIR}/filtered_coverage.info"
+  APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
+
+  rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" "${APPGW_ONLY_INFO}" || true
+
+  # Capture from the build tree that produced the test executable and linked objects.
+  # With Step 23b commented, this is the Step 23c L1Tests-only build dir; it still
+  # compiles AppGateway sources (with coverage flags) as part of dependency linkage.
+  lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
+  rc=$?
+  if [[ $rc -ne 0 ]]; then
+    warn "lcov capture failed with exit code ${rc}"
+    COVERAGE_EXIT_CODE=$rc
+  fi
+
+  # Filter out system and third-party paths.
+  if [[ -f "${COVERAGE_INFO}" ]]; then
+    lcov -r "${COVERAGE_INFO}" \
+      '/usr/include/*' \
+      "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
+      '*/install/usr/include/*' \
+      '*/Tests/headers/*' \
+      '*/Tests/mocks/*' \
+      '*/Tests/L1Tests/tests/*' \
+      '*/Thunder/*' \
+      -o "${FILTERED_INFO}"
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      warn "lcov filter (-r) failed with exit code ${rc}"
+      COVERAGE_EXIT_CODE=$rc
+    fi
+  fi
+
+  # Restrict report to AppGateway plugin sources.
+  if [[ -f "${FILTERED_INFO}" ]]; then
+    lcov -e "${FILTERED_INFO}" \
+      '*/AppGateway/*' \
+      -o "${APPGW_ONLY_INFO}"
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      warn "lcov include (-e) failed with exit code ${rc}"
+      COVERAGE_EXIT_CODE=$rc
+    fi
+  fi
+
+  # Always attempt to generate HTML if we have a final info file.
+  if [[ -f "${APPGW_ONLY_INFO}" ]]; then
+    genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) coverage" "${APPGW_ONLY_INFO}"
+    rc=$?
+    if [[ $rc -ne 0 ]]; then
+      warn "genhtml failed with exit code ${rc}"
+      COVERAGE_EXIT_CODE=$rc
+    else
+      COVERAGE_HTML_INDEX="${COVERAGE_DIR}/index.html"
+      log "[OK] Coverage generated at: ${COVERAGE_HTML_INDEX}"
+    fi
+  else
+    warn "Coverage input file not found (${APPGW_ONLY_INFO}); cannot generate HTML coverage."
+    COVERAGE_EXIT_CODE=${COVERAGE_EXIT_CODE:-3}
+  fi
 fi
 
-COVERAGE_DIR="${REPO_DIR}/coverage"
-COVERAGE_INFO="${REPO_DIR}/coverage.info"
-FILTERED_INFO="${REPO_DIR}/filtered_coverage.info"
-APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
-
-rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" "${APPGW_ONLY_INFO}" || true
-
-# Capture from the build tree that produced the test executable and linked objects.
-# With Step 23b commented, this is the Step 23c L1Tests-only build dir; it still
-# compiles AppGateway sources (with coverage flags) as part of dependency linkage.
-lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
-
-# Filter out system and third-party paths.
-lcov -r "${COVERAGE_INFO}" \
-  '/usr/include/*' \
-  "*/${APPGATEWAY_BUILD_DIR##*/}/_deps/*" \
-  '*/install/usr/include/*' \
-  '*/Tests/headers/*' \
-  '*/Tests/mocks/*' \
-  '*/Tests/L1Tests/tests/*' \
-  '*/Thunder/*' \
-  -o "${FILTERED_INFO}"
-
-# Restrict report to AppGateway plugin sources (and its common helpers if desired).
-# Authoritative requirement: "coverage html report for all the files in AppGateway plugin source".
-lcov -e "${FILTERED_INFO}" \
-  '*/AppGateway/*' \
-  -o "${APPGW_ONLY_INFO}"
-
-genhtml -o "${COVERAGE_DIR}" -t "entservices-appgateway (AppGateway-only) coverage" "${APPGW_ONLY_INFO}"
-
-log "[OK] Coverage generated at: ${COVERAGE_DIR}/index.html"
-
+set -e
 log "[Step 29] Upload artifacts (COMMENTED - not applicable locally)"
 
 echo "Summary:"
@@ -1094,4 +1158,20 @@ echo "  COVERAGE_TOOLCHAIN_FILE=${COVERAGE_TOOLCHAIN_FILE}"
 echo "  COVERAGE_FLAGS(CXX)=${COVERAGE_CXX_FLAGS}"
 echo "  APPGATEWAY_BUILD_DIR=${APPGATEWAY_BUILD_DIR}"
 echo "  TEST_RUNNER=AppGatewayL1Test"
-echo "  COVERAGE_DIR=${COVERAGE_DIR}"
+echo "  COVERAGE_DIR=${COVERAGE_DIR:-${REPO_DIR}/coverage}"
+echo "  COVERAGE_HTML_INDEX=${COVERAGE_HTML_INDEX:-<not generated>}"
+echo "  TEST_EXIT_CODE=${TEST_EXIT_CODE}"
+echo "  COVERAGE_EXIT_CODE=${COVERAGE_EXIT_CODE}"
+echo ""
+echo "Coverage HTML report path (if generated): ${COVERAGE_HTML_INDEX:-${REPO_DIR}/coverage/index.html}"
+
+# If tests failed, fail the script *after* coverage generation so CI can still
+# upload the coverage artifacts.
+if [[ "${COVERAGE_EXIT_CODE:-0}" -ne 0 ]]; then
+  err "Coverage generation encountered errors (exit code: ${COVERAGE_EXIT_CODE})."
+  exit "${COVERAGE_EXIT_CODE}"
+fi
+if [[ "${TEST_EXIT_CODE}" -ne 0 ]]; then
+  err "L1 tests failed (exit code: ${TEST_EXIT_CODE}). Coverage was still generated at: ${COVERAGE_HTML_INDEX:-${REPO_DIR}/coverage/index.html}"
+  exit "${TEST_EXIT_CODE}"
+fi
