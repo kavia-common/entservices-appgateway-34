@@ -1,21 +1,24 @@
 # Thunder/WPEFramework plugin configuration template for L1TestsIN
 #
-# This file is consumed by ConfigGenerator via write_config(L1TestsIN) from
-# Tests/L1Tests/CMakeLists.txt to generate a runtime .conf file.
+# IMPORTANT:
+# This file is used by ConfigGenerator (Python) and is executed as Python code.
+# Therefore it must contain valid Python syntax (assignments, dicts, lists, etc.).
 #
-# The L1TestsIN shared object is a legacy test module; for this workflow we
-# primarily care about the runnable AppGatewayL1Test executable, but the CMake
-# still invokes write_config(), so a template must exist.
-#
-# Keep this template minimal and stable. Any placeholders (e.g. @...@) are
-# substituted by ConfigGenerator.
+# CMake's write_config() will:
+#  1) configure_file(L1TestsIN.conf.in -> <build>/config/L1TestsIN.conf) with @ONLY
+#  2) run config_generator.py -i L1TestsIN.conf
+#  3) config_generator.py will load this file as a Python module and serialize
+#     whitelisted variables into <build>/config/L1TestsIN.json
 
-# Plugin metadata
-classname=@PLUGIN_CLASSNAME@
-locator=@PLUGIN_LOCATOR@
-autostart=false
+# These placeholders are substituted by CMake (@ONLY) from FindConfigGenerator.cmake.
+# They are inserted as Python string literals (quoted), otherwise the file will break.
+locator = "@PLUGIN_LOCATOR@"
+classname = "@PLUGIN_CLASSNAME@"
 
-# Optional/default settings for test plugin
-# (Leave empty unless your environment requires specific configuration.)
-configuration={
+# Common plugin fields (also parsed/serialized by ConfigGenerator if whitelisted).
+# Note: callsign/resumed/etc can be added here if needed by your environment.
+autostart = False
+
+# Plugin-specific settings payload.
+configuration = {
 }

@@ -202,7 +202,8 @@ target_include_directories(${MODULE_NAME}
 target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
 
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
-write_config(${PLUGIN_NAME})
+# Use the non-deprecated invocation form expected by FindConfigGenerator.cmake.
+write_config(PLUGINS ${PLUGIN_NAME})
 
 # -----------------------------------------------------------------------------
 # AppGatewayL1Test executable (required by the workflow/script)
