@@ -16,6 +16,14 @@
 # limitations under the License.
 
 cmake_minimum_required(VERSION 3.8)
+
+# -----------------------------------------------------------------------------
+# L1Tests build products
+#
+# Historically this directory only built a shared object (L1TestsIN) that is
+# loadable by Thunder. For coverage we additionally need a *runnable* test
+# executable for AppGateway: AppGatewayL1Test.
+# -----------------------------------------------------------------------------
 set(PLUGIN_NAME L1TestsIN)
 set(MODULE_NAME ${NAMESPACE}${PLUGIN_NAME})
 
@@ -24,6 +32,10 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 
 find_package(${NAMESPACE}Plugins REQUIRED)
 
+# -----------------------------------------------------------------------------
+# Shared-object (legacy) test module sources
+#   NOTE: Per request, keep this limited to test_UtilsFile.cpp for now.
+# -----------------------------------------------------------------------------
 set(TEST_SRC
     tests/test_UtilsFile.cpp
 )
@@ -35,20 +47,29 @@ set(TEST_LIB
 set(TEST_INC ../../helpers)
 
 # -----------------------------------------------------------------------------
-# AppGateway-specific L1 tests
-#
-# Requirement:
-#   Compile Tests/L1Tests/tests/test_AppGateway.cpp when AppGateway plugin is enabled.
-#
-# Control mechanism:
-#   The script/workflow passes -DPLUGIN_APPGATEWAY=ON, and the top-level project
-#   already uses PLUGIN_APPGATEWAY to add_subdirectory(AppGateway).
-#   We reuse the same option here to conditionally include the L1 test.
+# AppGateway-specific L1 tests (executable)
 # -----------------------------------------------------------------------------
+set(APPGATEWAY_L1TEST_SRC "")
+set(APPGATEWAY_L1TEST_INC "")
+set(APPGATEWAY_L1TEST_LIB "")
+
 if(PLUGIN_APPGATEWAY)
     message(STATUS "AppGateway L1 tests: ENABLED (PLUGIN_APPGATEWAY=ON)")
-    list(APPEND TEST_SRC tests/test_AppGateway.cpp)
-    list(APPEND TEST_INC ../../AppGateway ../../AppGatewayCommon)
+
+    # Source(s)
+    list(APPEND APPGATEWAY_L1TEST_SRC tests/test_AppGateway.cpp)
+
+    # Includes needed by test_AppGateway.cpp (plus common test headers)
+    list(APPEND APPGATEWAY_L1TEST_INC
+        ../../helpers
+        ../../AppGateway
+        ../../AppGatewayCommon
+    )
+
+    # Libraries: link against the plugin collection to satisfy Thunder symbols used in tests.
+    list(APPEND APPGATEWAY_L1TEST_LIB
+        ${NAMESPACE}Plugins::${NAMESPACE}Plugins
+    )
 else()
     message(STATUS "AppGateway L1 tests: DISABLED (set -DPLUGIN_APPGATEWAY=ON to enable)")
 endif()
@@ -120,6 +141,9 @@ macro(add_plugin_test plugin_name test_files)
     add_plugin_test_ex(${plugin_opt} "${test_files}" "../../${plugin_name}" "${NAMESPACE}${plugin_name}")
 endmacro()
 
+# -----------------------------------------------------------------------------
+# Legacy shared object
+# -----------------------------------------------------------------------------
 add_library(${MODULE_NAME} SHARED ${TEST_SRC})
 
 if(RDK_SERVICES_L1_TEST)
@@ -139,9 +163,7 @@ target_include_directories(${MODULE_NAME}
     PUBLIC
     $<BUILD_INTERFACE:${CMAKE_CURRENT_SOURCE_DIR}>
     $<INSTALL_INTERFACE:include>
-    ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks
-    ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/devicesettings
-    ${CMAKE_SOURCE_DIR}/../entservices-testframework/Tests/mocks/thunder
+    ${CMAKE_SOURCE_DIR}/Tests/mocks
     ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
 )
 
@@ -149,3 +171,35 @@ target_compile_definitions(${MODULE_NAME} PRIVATE UNIT_TEST)
 
 install(TARGETS ${MODULE_NAME} DESTINATION lib)
 write_config(${PLUGIN_NAME})
+
+# -----------------------------------------------------------------------------
+# AppGatewayL1Test executable (required by the workflow/script)
+# -----------------------------------------------------------------------------
+if(PLUGIN_APPGATEWAY)
+    add_executable(AppGatewayL1Test ${APPGATEWAY_L1TEST_SRC})
+
+    target_include_directories(AppGatewayL1Test
+        PRIVATE
+        ${APPGATEWAY_L1TEST_INC}
+        ${CMAKE_INSTALL_PREFIX}/include
+        ${CMAKE_SOURCE_DIR}/Tests/mocks
+        ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
+    )
+
+    target_link_directories(AppGatewayL1Test PRIVATE
+        ${CMAKE_INSTALL_PREFIX}/lib
+        ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
+    )
+
+    target_link_libraries(AppGatewayL1Test PRIVATE
+        ${APPGATEWAY_L1TEST_LIB}
+        gtest
+        gtest_main
+        pthread
+    )
+
+    target_compile_definitions(AppGatewayL1Test PRIVATE UNIT_TEST)
+
+    # Install to the location the script checks first: install/usr/bin/AppGatewayL1Test
+    install(TARGETS AppGatewayL1Test RUNTIME DESTINATION bin)
+endif()

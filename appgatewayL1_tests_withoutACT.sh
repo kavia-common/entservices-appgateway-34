@@ -771,13 +771,6 @@ log "[Step 23b] Full build entservices-appgateway (AppGateway + AppGatewayCommon
 
 APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
 
-APPGW_CMAKE_GENERATOR_ARGS=()
-if have_cmd ninja; then
-  APPGW_CMAKE_GENERATOR_ARGS=(-G Ninja)
-else
-  APPGW_CMAKE_GENERATOR_ARGS=(-G "Unix Makefiles")
-fi
-
 EXTRA_APPGW_CMAKE_ARGS=(
   -DRDK_SERVICES_L1_TEST=ON
   -DPLUGIN_APPGATEWAY=ON
@@ -793,22 +786,6 @@ EXTRA_APPGW_CMAKE_ARGS=(
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
-
-(
-  printf '==> entservices-appgateway: Full CMake configure command: '
-  printf 'cmake'
-  for a in "${APPGW_CMAKE_GENERATOR_ARGS[@]}"; do
-    printf ' %q' "${a}"
-  done
-  printf ' -S %q -B %q -DCMAKE_BUILD_TYPE=Debug -DCMAKE_INSTALL_PREFIX=%q' \
-    "${APPGATEWAY_SRC_DIR}" \
-    "${APPGATEWAY_BUILD_DIR}" \
-    "${INSTALL_USR}"
-  for a in "${EXTRA_APPGW_CMAKE_ARGS[@]}"; do
-    printf ' %q' "${a}"
-  done
-  printf '\n'
-)
 
 cmake_configure_build_install \
   "entservices-appgateway" \
@@ -855,7 +832,12 @@ log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for
   if have_cmd AppGatewayL1Test; then
     TEST_BIN="AppGatewayL1Test"
   else
-    if [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test" ]]; then
+    # Preferred explicit paths (authoritative per attached log):
+    #   - install prefix: install/usr/bin/AppGatewayL1Test
+    #   - build tree:     <build>/Tests/L1Tests/AppGatewayL1Test
+    if [[ -x "${INSTALL_USR}/bin/AppGatewayL1Test" ]]; then
+      TEST_BIN="${INSTALL_USR}/bin/AppGatewayL1Test"
+    elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test" ]]; then
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test"
     elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe" ]]; then
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe"
@@ -865,7 +847,10 @@ log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for
   if [[ -z "${TEST_BIN}" ]]; then
     err "AppGatewayL1Test not found."
     err "Expected it from building Tests/L1Tests (includes Tests/L1Tests/tests/test_AppGateway.cpp)."
-    err "Checked PATH (${INSTALL_USR}/bin) and build tree under: ${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/"
+    err "Checked:"
+    err "  - PATH (${INSTALL_USR}/bin)"
+    err "  - ${INSTALL_USR}/bin/AppGatewayL1Test"
+    err "  - ${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test"
     exit 1
   fi
 
