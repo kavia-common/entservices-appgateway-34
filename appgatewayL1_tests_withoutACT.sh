@@ -744,9 +744,14 @@ L1TESTS_ONLY_CMAKE_ARGS=(
   -DPLUGIN_APPGATEWAY=ON
   -DPLUGIN_APPGATEWAYCOMMON=ON
 
-  # AppNotifications is optional in this L1 flow. If enabled, its output location/name
-  # may differ depending on CMake options; Step 23 staging below will handle both.
-  -DPLUGIN_APPNOTIFICATIONS=OFF
+  # AppNotifications is optional in this L1 flow.
+  #
+  # Default is OFF, because some L1-only build trees won't generate this target output,
+  # and we don't want Step 23 to fail due to an unrelated optional plugin.
+  #
+  # To enable in CI or locally:
+  #   ENABLE_APPNOTIFICATIONS=1 ./appgatewayL1_tests_withoutACT.sh
+  -DPLUGIN_APPNOTIFICATIONS=$([[ "${ENABLE_APPNOTIFICATIONS:-0}" == "1" ]] && echo ON || echo OFF)
 
   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
   -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
@@ -780,12 +785,13 @@ cmake --build "${APPGATEWAY_BUILD_DIR}" --target AppGatewayL1Test -- -j"$(getcon
 # the real in-tree one.
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGateway" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppGatewayCommon" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+if [[ "${ENABLE_APPNOTIFICATIONS:-0}" == "1" ]]; then
+  cmake --build "${APPGATEWAY_BUILD_DIR}" --target "AppNotifications" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
+fi
 cmake --build "${APPGATEWAY_BUILD_DIR}" --target "L1TestsIN" -- -j"$(getconf _NPROCESSORS_ONLN 2>/dev/null || echo 2)" 2>/dev/null || true
 
 # Stage required plugin shared libraries built as part of the L1Tests-only build.
-# This is critical: runtime loads the AppGateway plugin .so and the L1TestsIN module .so.
-# In addition, AppGateway is typically linked/loaded with sibling plugin libs from this repo;
-# stage them as well so runtime resolution via LD_LIBRARY_PATH is stable.
+# Runtime loads plugins from: install/usr/lib/wpeframework/plugins
 LOCAL_PLUGIN_DIR="${INSTALL_USR}/lib/wpeframework/plugins"
 mkdir -p "${LOCAL_PLUGIN_DIR}"
 
@@ -848,8 +854,6 @@ stage_plugin_with_expected_name() {
   cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/"
 
   # Also stage using the expected WPEFramework plugin naming if different.
-  # This fixes the mismatch seen in the authoritative log where the build
-  # output is AppGateway/libAppGateway.so but downstream expects a different name.
   if [[ -n "${expected_basename}" ]]; then
     cp -f "${so_path}" "${LOCAL_PLUGIN_DIR}/${expected_basename}"
     log "[OK] Staged ${desc} at: ${LOCAL_PLUGIN_DIR}/${expected_basename} (from $(basename "${so_path}"))"
@@ -858,32 +862,48 @@ stage_plugin_with_expected_name() {
   fi
 }
 
-# Build output layout (authoritative per attached log for L1Tests-only build):
-#   - AppGateway plugin .so is under:         <build>/AppGateway/libAppGateway.so
-#   - AppGatewayCommon plugin .so is under:   <build>/AppGatewayCommon/libAppGatewayCommon.so
-#   - AppNotifications plugin .so (if built) is commonly under:
-#       <build>/AppNotifications/libAppNotifications.so
-#     but may also land directly under <build>/AppNotifications/ or other generator-specific locations.
-#   - L1TestsIN test module .so is under:     <build>/ (root)
-#
-# Stage per-plugin dirs first (best effort), then enforce the two hard requirements:
-#   - AppGateway plugin .so (and stage under expected WPEFramework plugin naming)
-#   - L1TestsIN test module .so
+# Build output layout (per attached logs):
+#   - <build>/AppGateway/libAppGateway.so
+#   - <build>/AppGatewayCommon/libAppGatewayCommon.so
+#   - <build>/*.so  (L1TestsIN module)
+#   - <build>/AppNotifications/... (optional)
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGateway" "AppGateway"
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppGatewayCommon" "AppGatewayCommon"
 
-# AppNotifications staging:
-# If PLUGIN_APPNOTIFICATIONS is OFF (default in this script), this directory will not exist.
-# If enabled, stage whatever .so is produced from its build dir.
+# AppNotifications staging is best-effort (never fatal in default flow)
 stage_all_plugins_from_dir_best_effort "${APPGATEWAY_BUILD_DIR}/AppNotifications" "AppNotifications"
 
-# AppGateway plugin (hard requirement)
-# - Actual output:    AppGateway/libAppGateway.so
-# - Expected naming:  libWPEFrameworkAppGateway.so (what downstream scripts/environments often look for)
+# Hard requirements: stage and validate AppGateway + AppGatewayCommon into the STAGING dir.
+# (The previous failure was caused by validating the build-tree path, even though staging succeeded.)
 stage_plugin_with_expected_name "\"${APPGATEWAY_BUILD_DIR}/AppGateway/libAppGateway.so*\"" "AppGateway plugin" "libWPEFrameworkAppGateway.so"
+stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/AppGatewayCommon/libAppGatewayCommon.so*\"" "AppGatewayCommon plugin"
 
 # L1TestsIN plugin module (hard requirement; built from Tests/L1Tests add_library(${MODULE_NAME} ...))
 stage_plugin_so_from_glob "\"${APPGATEWAY_BUILD_DIR}/*.so*\"" "L1TestsIN test module"
+
+# Final validation should check what runtime will use: the staged plugin directory.
+if ! ls -1 "${LOCAL_PLUGIN_DIR}/libAppGateway.so"* >/dev/null 2>&1; then
+  err "Step 23 validation failed: libAppGateway.so missing from staged plugin directory."
+  err "Expected in: ${LOCAL_PLUGIN_DIR}"
+  err "Directory listing:"
+  ls -la "${LOCAL_PLUGIN_DIR}" || true
+  exit 1
+fi
+if ! ls -1 "${LOCAL_PLUGIN_DIR}/libAppGatewayCommon.so"* >/dev/null 2>&1; then
+  err "Step 23 validation failed: libAppGatewayCommon.so missing from staged plugin directory."
+  err "Expected in: ${LOCAL_PLUGIN_DIR}"
+  err "Directory listing:"
+  ls -la "${LOCAL_PLUGIN_DIR}" || true
+  exit 1
+fi
+
+# Optional: if enabled, ensure we staged *something* for AppNotifications.
+if [[ "${ENABLE_APPNOTIFICATIONS:-0}" == "1" ]]; then
+  if ! ls -1 "${LOCAL_PLUGIN_DIR}/libAppNotifications.so"* >/dev/null 2>&1; then
+    warn "ENABLE_APPNOTIFICATIONS=1 but libAppNotifications.so not found in staged plugin dir (${LOCAL_PLUGIN_DIR})."
+    warn "Continuing (non-fatal), since L1 tests only require AppGateway."
+  fi
+fi
 
 ls -la "${LOCAL_PLUGIN_DIR}/"*.so* 2>/dev/null || true
 
