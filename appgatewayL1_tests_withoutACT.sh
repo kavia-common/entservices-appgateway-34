@@ -767,16 +767,64 @@ log "[OK] AppGateway plugin staged for L1 tests at: ${LOCAL_PLUGIN_DIR}/$(basena
 ls -la "${LOCAL_PLUGIN_DIR}/"*AppGateway*.so* 2>/dev/null || true
 
 # Step 23b: Full build with L1 tests enabled and all relevant plugins compiled.
-log "[Step 23b] Full build entservices-appgateway (AppGateway + AppGatewayCommon + AppNotifications + L1 tests; install to ${INSTALL_USR}; coverage enabled)"
+# ---------------------------------------------------------------------------
+# IMPORTANT (authoritative request):
+#   Keep Step 23b commented for now.
+#
+# Rationale:
+#   A full build + install runs AppGateway install rules that attempt to install
+#   files into /etc (e.g. /etc/app-gateway/), which fails in CI/non-root flows.
+#
+# Instead, we build the L1 test executable directly from Tests/L1Tests, without
+# installing, while still compiling AppGateway sources with coverage flags.
+# ---------------------------------------------------------------------------
+# log "[Step 23b] Full build entservices-appgateway (AppGateway + AppGatewayCommon + AppNotifications + L1 tests; install to ${INSTALL_USR}; coverage enabled)"
+#
+# APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
+#
+# EXTRA_APPGW_CMAKE_ARGS=(
+#   -DRDK_SERVICES_L1_TEST=ON
+#   -DPLUGIN_APPGATEWAY=ON
+#   -DPLUGIN_APPGATEWAYCOMMON=ON
+#   -DPLUGIN_APPNOTIFICATIONS=ON
+#   -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
+#   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
+#   -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
+#   -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
+#   -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
+# )
+#
+# if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
+#   EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+# fi
+#
+# cmake_configure_build_install \
+#   "entservices-appgateway" \
+#   "${APPGATEWAY_SRC_DIR}" \
+#   "${APPGATEWAY_BUILD_DIR}" \
+#   "${INSTALL_USR}" \
+#   "${EXTRA_APPGW_CMAKE_ARGS[@]}"
 
-APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway"
+# ---------------------------------------------------------------------------
+# Step 23c (replacement for Step 23b while Step 23b is commented):
+#   Build AppGatewayL1Test by configuring/building ONLY Tests/L1Tests.
+#
+# Key points:
+#   - We avoid "install" entirely (so no /etc writes).
+#   - We still compile AppGateway sources because Tests/L1Tests depends on the
+#     ${NAMESPACE}Plugins target and includes AppGateway headers.
+#   - Coverage flags are applied at configure-time.
+# ---------------------------------------------------------------------------
+log "[Step 23c] Build AppGatewayL1Test via Tests/L1Tests (NO INSTALL; coverage enabled)"
 
-EXTRA_APPGW_CMAKE_ARGS=(
+APPGATEWAY_BUILD_DIR="${BUILD_ROOT}/entservices-appgateway-l1tests-only"
+
+L1TESTS_ONLY_CMAKE_ARGS=(
+  -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
   -DRDK_SERVICES_L1_TEST=ON
   -DPLUGIN_APPGATEWAY=ON
-  -DPLUGIN_APPGATEWAYCOMMON=ON
-  -DPLUGIN_APPNOTIFICATIONS=ON
-  -DCMAKE_PREFIX_PATH="${INSTALL_USR}"
+  -DPLUGIN_APPGATEWAYCOMMON=OFF
+  -DPLUGIN_APPNOTIFICATIONS=OFF
   -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}"
   -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}"
   -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}"
@@ -784,15 +832,24 @@ EXTRA_APPGW_CMAKE_ARGS=(
 )
 
 if [[ -f "${COVERAGE_TOOLCHAIN_FILE}" ]]; then
-  EXTRA_APPGW_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
+  L1TESTS_ONLY_CMAKE_ARGS+=(-DCMAKE_TOOLCHAIN_FILE="${COVERAGE_TOOLCHAIN_FILE}")
 fi
 
-cmake_configure_build_install \
-  "entservices-appgateway" \
-  "${APPGATEWAY_SRC_DIR}" \
+# Configure/build ONLY the Tests/L1Tests subdir so we get AppGatewayL1Test without install-time /etc writes.
+cmake_configure_build_noinstall \
+  "entservices-appgateway-l1tests-only" \
+  "${APPGATEWAY_SRC_DIR}/Tests/L1Tests" \
   "${APPGATEWAY_BUILD_DIR}" \
-  "${INSTALL_USR}" \
-  "${EXTRA_APPGW_CMAKE_ARGS[@]}"
+  "${L1TESTS_ONLY_CMAKE_ARGS[@]}"
+
+# The executable is expected in this build tree:
+#   <build>/AppGatewayL1Test
+if [[ -x "${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test" ]]; then
+  log "[OK] Built AppGatewayL1Test at: ${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test"
+else
+  warn "AppGatewayL1Test not found at expected path: ${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test"
+  warn "Step 26 will still attempt other locations, but coverage capture expects this build dir."
+fi
 
 # -----------------------------------------------------------------------------
 # Step 24: Ensure required mock headers are available via install prefix include
@@ -837,7 +894,13 @@ log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for
     #   - build tree:     <build>/Tests/L1Tests/AppGatewayL1Test
     if [[ -x "${INSTALL_USR}/bin/AppGatewayL1Test" ]]; then
       TEST_BIN="${INSTALL_USR}/bin/AppGatewayL1Test"
+    elif [[ -x "${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test" ]]; then
+      # Step 23c (Tests/L1Tests-only build dir)
+      TEST_BIN="${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test"
+    elif [[ -x "${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test.exe" ]]; then
+      TEST_BIN="${APPGATEWAY_BUILD_DIR}/AppGatewayL1Test.exe"
     elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test" ]]; then
+      # Legacy location (full tree build)
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test"
     elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe" ]]; then
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe"
@@ -893,7 +956,9 @@ APPGW_ONLY_INFO="${REPO_DIR}/appgateway_only_coverage.info"
 
 rm -rf "${COVERAGE_DIR}" "${COVERAGE_INFO}" "${FILTERED_INFO}" "${APPGW_ONLY_INFO}" || true
 
-# Capture from the *full build tree* (contains tests and plugin objects).
+# Capture from the build tree that produced the test executable and linked objects.
+# With Step 23b commented, this is the Step 23c L1Tests-only build dir; it still
+# compiles AppGateway sources (with coverage flags) as part of dependency linkage.
 lcov -c -o "${COVERAGE_INFO}" -d "${APPGATEWAY_BUILD_DIR}"
 
 # Filter out system and third-party paths.
