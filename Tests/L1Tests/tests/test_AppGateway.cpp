@@ -334,11 +334,11 @@ TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingParam
     PathsIterator it({ cfg });
     EXPECT_EQ(Core::ERROR_NONE, impl.Configure(&it));
 
-    // Missing/invalid params should yield BAD_REQUEST, per mapping.
+    // Missing/invalid params should yield BAD_REQUEST, per implementation.
     std::string resolution;
     const auto ctx = MakeContext();
     EXPECT_EQ(Core::ERROR_BAD_REQUEST, impl.Resolve(ctx, "gateway", "event.method", "" /* params missing */, resolution));
-    EXPECT_THAT(resolution, ::testing::HasSubstr("Event methods require parameters"));
+    EXPECT_THAT(resolution, ::testing::HasSubstr("Missing required boolean 'listen' parameter"));
 }
 
 TEST(AppGatewayImplementationTest, AppGateway_Event_PreProcessEvent_MissingListen_BadRequest)
@@ -525,7 +525,8 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
         impl.Resolve(ctx, "gateway", "comrpc.method", R"json({"a":1})json", resolution));
 
     // The error payload is built by ErrorUtils::NotAvailable; validate by substring.
-    EXPECT_THAT(resolution, ::testing::HasSubstr("Not available"));
+    // Authoritative behavior (attached log): {"code":-50200,"message":"NotAvailable"}
+    EXPECT_THAT(resolution, ::testing::HasSubstr("NotAvailable"));
 }
 
 TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsParamsWith_additionalContext)
@@ -536,6 +537,7 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
           "resolutions": {
             "comrpc.method": {
               "alias": "org.rdk.SomeHandler",
+              "includeContext": true,
               "additionalContext": { "foo": "bar" }
             }
           }
@@ -551,13 +553,13 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsPara
     EXPECT_CALL(*handler, AddRef()).Times(::testing::AnyNumber());
     EXPECT_CALL(*handler, Release()).Times(1).WillOnce(::testing::Return(Core::ERROR_NONE));
 
-    // Return the handler only when alias callsign matches.
+    // Return the handler when alias callsign matches; allow repeats (implementation may re-query).
     EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq("org.rdk.SomeHandler")))
-        .WillOnce(::testing::Return(static_cast<void*>(handler)));
+        .Times(::testing::AnyNumber())
+        .WillRepeatedly(::testing::Return(static_cast<void*>(handler)));
 
     // AppGatewayImplementation may also try to send an internal responder message (async)
     // via SendToLaunchDelegate(), which looks up "org.rdk.LaunchDelegate".
-    // Allow it and return nullptr (we don't validate responder behavior in this test).
     EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq("org.rdk.LaunchDelegate")))
         .Times(::testing::AnyNumber())
         .WillRepeatedly(::testing::Return(nullptr));

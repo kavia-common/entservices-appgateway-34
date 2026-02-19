@@ -958,6 +958,13 @@ fi
 # -----------------------------------------------------------------------------
 log "[Step 26] Build and run AppGateway L1 tests (REQUIRED - generates .gcda for coverage)"
 
+# Authoritative fix (attached log):
+# libgcov profiling error: ... .gcda: overwriting an existing profile data with a different checksum
+# This happens when stale .gcda exists from a previous build (different object checksum).
+# Clean old coverage data from the active build tree before running the test binary.
+log "Cleaning stale gcov data (.gcda) under build dir: ${APPGATEWAY_BUILD_DIR}"
+find "${APPGATEWAY_BUILD_DIR}" -type f -name "*.gcda" -print -delete 2>/dev/null || true
+
 (
   export PATH="${INSTALL_USR}/bin:${PATH}"
 

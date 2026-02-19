@@ -3,8 +3,8 @@
   "failures": 4,
   "disabled": 0,
   "errors": 0,
-  "timestamp": "2026-02-19T08:34:56Z",
-  "time": "0.019s",
+  "timestamp": "2026-02-19T08:39:46Z",
+  "time": "0.016s",
   "name": "AllTests",
   "testsuites": [
     {
@@ -13,8 +13,8 @@
       "failures": 0,
       "disabled": 0,
       "errors": 0,
-      "timestamp": "2026-02-19T08:34:56Z",
-      "time": "0.013s",
+      "timestamp": "2026-02-19T08:39:46Z",
+      "time": "0.001s",
       "testsuite": [
         {
           "name": "Resolver_LoadConfig_MissingFile_ReturnsFalse",
@@ -22,7 +22,7 @@
           "line": 148,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
+          "timestamp": "2026-02-19T08:39:46Z",
           "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
@@ -32,8 +32,8 @@
           "line": 156,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0.001s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
@@ -42,8 +42,8 @@
           "line": 166,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0.003s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
@@ -52,8 +52,8 @@
           "line": 178,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0.006s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0s",
           "classname": "AppGatewayResolverTest"
         },
         {
@@ -62,8 +62,8 @@
           "line": 215,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0.002s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0s",
           "classname": "AppGatewayResolverTest"
         }
       ]
@@ -74,8 +74,8 @@
       "failures": 4,
       "disabled": 0,
       "errors": 0,
-      "timestamp": "2026-02-19T08:34:56Z",
-      "time": "0.006s",
+      "timestamp": "2026-02-19T08:39:46Z",
+      "time": "0.014s",
       "testsuite": [
         {
           "name": "AppGateway_Event_PreProcessEvent_MissingParams_BadRequest",
@@ -83,14 +83,10 @@
           "line": 249,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
+          "timestamp": "2026-02-19T08:39:46Z",
           "time": "0.003s",
           "classname": "AppGatewayImplementationTest",
           "failures": [
-            {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:271\nExpected equality of these values:\n  Core::ERROR_NONE\n    Which is: 0\n  impl.Configure(&service)\n    Which is: 1\n",
-              "type": ""
-            },
             {
               "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:341\nValue of: resolution\nExpected: has substring \"Event methods require parameters\"\n  Actual: \"{\\\"code\\\":-32602,\\\"message\\\":\\\"Missing required boolean 'listen' parameter\\\"}\"\n",
               "type": ""
@@ -100,11 +96,11 @@
               "type": ""
             },
             {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
+              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f942abc3bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
               "type": ""
             },
             {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f1788222bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
+              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
               "type": ""
             }
           ]
@@ -115,16 +111,12 @@
           "line": 344,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0.003s",
           "classname": "AppGatewayImplementationTest",
           "failures": [
             {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:362\nExpected equality of these values:\n  Core::ERROR_NONE\n    Which is: 0\n  impl.Configure(&service)\n    Which is: 1\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f1788222bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
+              "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f942abc3bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\n",
               "type": ""
             },
             {
@@ -143,14 +135,10 @@
           "line": 433,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0.003s",
           "classname": "AppGatewayImplementationTest",
           "failures": [
-            {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:458\nExpected equality of these values:\n  Core::ERROR_NONE\n    Which is: 0\n  impl.Configure(&service)\n    Which is: 1\n",
-              "type": ""
-            },
             {
               "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:528\nValue of: resolution\nExpected: has substring \"Not available\"\n  Actual: \"{\\\"code\\\":-50200,\\\"message\\\":\\\"NotAvailable\\\"}\"\n",
               "type": ""
@@ -171,18 +159,10 @@
           "line": 531,
           "status": "RUN",
           "result": "COMPLETED",
-          "timestamp": "2026-02-19T08:34:56Z",
-          "time": "0s",
+          "timestamp": "2026-02-19T08:39:46Z",
+          "time": "0.003s",
           "classname": "AppGatewayImplementationTest",
           "failures": [
-            {
-              "failure": "\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:559\nExpected equality of these values:\n  Core::ERROR_NONE\n    Which is: 0\n  impl.Configure(&service)\n    Which is: 1\n",
-              "type": ""
-            },
-            {
-              "failure": "unknown file\n\nUnexpected mock function call - returning default value.\n    Function call: QueryInterfaceByCallsign(53313, @0x7f1788222bd0 \"org.rdk.LaunchDelegate\")\n          Returns: NULL\nGoogle Mock tried the following 1 expectation, but it didn't match:\n\n\/home\/kavia\/workspace\/code-generation\/entservices-appgateway-34\/Tests\/L1Tests\/tests\/test_AppGateway.cpp:555: EXPECT_CALL(service, QueryInterfaceByCallsign(::testing::_, ::testing::StrEq(\"org.rdk.SomeHandler\")))...\n  Expected arg #1: is equal to \"org.rdk.SomeHandler\"\n           Actual: \"org.rdk.LaunchDelegate\"\n         Expected: to be called once\n           Actual: called once - saturated and active\n",
-              "type": ""
-            },
             {
               "failure": "unknown file\nUninteresting mock function call - returning default value.\n    Function call: Release()\n          Returns: 0\n",
               "type": ""
