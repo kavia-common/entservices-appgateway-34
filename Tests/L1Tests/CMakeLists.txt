@@ -50,6 +50,26 @@ set(CMAKE_CXX_STANDARD_REQUIRED ON)
 # Therefore, any plugin implementation we need for linkage must be pulled in
 # explicitly from here.
 # -----------------------------------------------------------------------------
+#
+# IMPORTANT:
+# In the L1Tests-only build, the repository root CMakeLists.txt is NOT executed.
+# Therefore, any global options/definitions normally set at repo root (like
+# DISABLE_SECURITY_TOKEN) must be applied here *before* adding plugin
+# subdirectories, otherwise plugin targets (e.g. AppGatewayCommon) will compile
+# without the expected flags and can include SecurityAgent headers.
+#
+if(DISABLE_SECURITY_TOKEN)
+    # Apply as a directory-level compile definition so all targets created under
+    # this directory (including add_subdirectory()'d plugins) inherit it.
+    add_compile_definitions(DISABLE_SECURITY_TOKEN)
+endif()
+
+if(USE_THUNDER_R4)
+    # Keep Thunder interface selection consistent across tests and pulled-in
+    # plugins (some helper headers use this define for interface differences).
+    add_compile_definitions(USE_THUNDER_R4)
+endif()
+
 if(PLUGIN_APPGATEWAY)
     # AppGateway/CMakeLists.txt defines the implementation library target
     #   WPEFrameworkAppGateway
@@ -61,13 +81,6 @@ if(PLUGIN_APPGATEWAYCOMMON)
     # Also allow building/staging AppGatewayCommon plugin shared library from
     # the same L1Tests-only build when requested.
     add_subdirectory(${CMAKE_CURRENT_LIST_DIR}/../../AppGatewayCommon ${CMAKE_BINARY_DIR}/AppGatewayCommon)
-endif()
-
-# In an L1Tests-only configure, the top-level (repo root) CMakeLists.txt is not
-# executed, so its `add_definitions(-DDISABLE_SECURITY_TOKEN)` would not run.
-# Apply the requested compile define globally from this entry point instead.
-if(DISABLE_SECURITY_TOKEN)
-    add_definitions(-DDISABLE_SECURITY_TOKEN)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -106,8 +119,9 @@ if(NOT DEFINED NAMESPACE)
 endif()
 
 if("${NAMESPACE}" STREQUAL "")
-    # Prefer the canonical Thunder package name.
+    # Prefer the canonical Thunder package names.
     find_package(WPEFrameworkPlugins REQUIRED)
+    find_package(WPEFrameworkDefinitions REQUIRED)
 
     # Provide compatibility variables so existing references like
     #   ${NAMESPACE}Plugins::${NAMESPACE}Plugins
@@ -115,9 +129,15 @@ if("${NAMESPACE}" STREQUAL "")
     if(NOT TARGET Plugins::Plugins AND TARGET WPEFrameworkPlugins::WPEFrameworkPlugins)
         add_library(Plugins::Plugins ALIAS WPEFrameworkPlugins::WPEFrameworkPlugins)
     endif()
+
+    # And the same for Definitions.
+    if(NOT TARGET Definitions::Definitions AND TARGET WPEFrameworkDefinitions::WPEFrameworkDefinitions)
+        add_library(Definitions::Definitions ALIAS WPEFrameworkDefinitions::WPEFrameworkDefinitions)
+    endif()
 else()
     # For non-empty namespaces keep the original behavior.
     find_package(${NAMESPACE}Plugins REQUIRED)
+    find_package(${NAMESPACE}Definitions REQUIRED)
 endif()
 
 # -----------------------------------------------------------------------------
@@ -322,20 +342,14 @@ if(PLUGIN_APPGATEWAY)
         ${CMAKE_SOURCE_DIR}/../Thunder/Source/plugins
     )
 
-    # AppGateway plugin library is staged/installed into:
-    #   <prefix>/lib/wpeframework/plugins/libWPEFrameworkAppGateway.so
-    # Ensure the linker can resolve -lWPEFrameworkAppGateway in L1Tests-only builds.
-    target_link_directories(AppGatewayL1Test PRIVATE
-        ${CMAKE_INSTALL_PREFIX}/lib
-        ${CMAKE_INSTALL_PREFIX}/lib/wpeframework/plugins
-
-        # In our CI flow, dependencies are installed into <repo>/install/usr, while
-        # the L1Tests-only build sets CMAKE_INSTALL_PREFIX to /usr/local by default.
-        # The AppGateway plugin .so is located under:
-        #   <repo>/install/usr/lib/wpeframework/plugins
-        # so add that path explicitly for reliable -lWPEFrameworkAppGateway resolution.
-        ${CMAKE_CURRENT_LIST_DIR}/../../install/usr/lib/wpeframework/plugins
-    )
+    # IMPORTANT:
+    # Do NOT link AppGatewayL1Test via "-lWPEFrameworkAppGateway" or plugin install paths.
+    # In the L1Tests-only build we want to link directly against the in-tree CMake
+    # target (WPEFrameworkAppGateway) so all implementation objects (Resolver,
+    # AppGatewayImplementation, etc.) are on the link line and symbols resolve.
+    #
+    # Plugin staging of the resulting .so files is handled by the workflow script
+    # (it copies from the build tree into install/usr/lib/wpeframework/plugins).
 
     target_link_libraries(AppGatewayL1Test PRIVATE
         ${APPGATEWAY_L1TEST_LIB}
