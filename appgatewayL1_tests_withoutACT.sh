@@ -600,6 +600,19 @@ if [[ -d "${THUNDERTOOLS_DIR}" ]]; then
     "${BUILD_ROOT}/ThunderTools" \
     "${INSTALL_USR}" \
     -DPROJECT_DIR="${WORKSPACE_ROOT}"
+
+  # Ensure the ConfigGenerator CMake package is discoverable for subsequent builds.
+  # This is required because WPEFrameworkPluginsConfig.cmake (from Thunder install)
+  # does: find_package(ConfigGenerator ...)
+  export CMAKE_PREFIX_PATH="${INSTALL_USR}:${CMAKE_PREFIX_PATH:-}"
+  export ConfigGenerator_DIR="${INSTALL_USR}/lib/cmake/ConfigGenerator"
+
+  if [[ ! -f "${ConfigGenerator_DIR}/ConfigGeneratorConfig.cmake" ]]; then
+    err "ThunderTools install did not produce ConfigGeneratorConfig.cmake"
+    err "Expected: ${ConfigGenerator_DIR}/ConfigGeneratorConfig.cmake"
+    err "This will cause find_package(ConfigGenerator) to fail later."
+    exit 1
+  fi
 else
   warn "ThunderTools dir not found at ${THUNDERTOOLS_DIR}; skipping build."
 fi

@@ -54,6 +54,10 @@ cmake -G Ninja -S ThunderTools -B build/ThunderTools \
 
 cmake --build build/ThunderTools --target install
 
+# Sanity check: ThunderTools install must provide a discoverable ConfigGenerator CMake package
+# for downstream consumers that call find_package(ConfigGenerator).
+test -f "$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
+
 
 ############################
 # Build Thunder

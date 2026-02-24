@@ -148,6 +148,8 @@ jobs:
       - name: Build ThunderTools
         if: steps.cache.outputs.cache-hit != 'true'
         run: |
+          set -euo pipefail
+
           cmake -G Ninja \
             -S "$GITHUB_WORKSPACE/ThunderTools" \
             -B build/ThunderTools \
@@ -157,6 +159,17 @@ jobs:
             -DPROJECT_DIR="$GITHUB_WORKSPACE"
           cmake --build build/ThunderTools -- -j"$(nproc)"
           cmake --install build/ThunderTools
+
+          # Sanity check: L1 build later requires find_package(ConfigGenerator).
+          # ThunderTools install must therefore provide:
+          #   install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake
+          test -f "$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
+
+      - name: Configure CMake package discovery for L1 builds
+        run: |
+          set -euo pipefail
+          echo "CMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/install/usr" >> "$GITHUB_ENV"
+          echo "ConfigGenerator_DIR=$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator" >> "$GITHUB_ENV"
 
       - name: Apply patches Thunder (from repo)
         run: |
