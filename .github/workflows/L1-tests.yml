@@ -232,7 +232,7 @@ jobs:
           &&
           cmake --install build/googletest
 
-      - name: Sanity check: ConfigGenerator package is installed
+      - name: "Sanity check: ConfigGenerator package is installed"
         run: |
           set -euo pipefail
           test -f "$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
