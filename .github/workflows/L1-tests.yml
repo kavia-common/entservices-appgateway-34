@@ -226,11 +226,17 @@ jobs:
           -DBUILD_TYPE=Debug
           -DBUILD_GMOCK=ON
           -DBUILD_SHARED_LIBS=OFF
-          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          -DCMAKE_POSITION_INDEPENDENTENT_CODE=ON
           &&
           cmake --build build/googletest -j8
           &&
           cmake --install build/googletest
+
+      - name: Sanity check: ConfigGenerator package is installed
+        run: |
+          set -euo pipefail
+          test -f "$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
+          echo "Found: $GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
 
       - name: Build AppGateway L1 tests (Tests/L1Tests only; NO install; coverage enabled)
         # Script parity: configure/build ONLY Tests/L1Tests and avoid install-time /etc writes.
@@ -241,11 +247,23 @@ jobs:
           export COVERAGE_CXX_FLAGS="-O0 -g --coverage -fprofile-arcs -ftest-coverage"
           export COVERAGE_LINKER_FLAGS="--coverage"
 
+          # Make sure CMake (and any helper Find*.cmake modules) can locate generator tools
+          # installed into the repo-local prefix. This is critical for `act`, where the
+          # environment can differ from GitHub-hosted runners.
+          export CMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/install/usr${CMAKE_PREFIX_PATH:+:$CMAKE_PREFIX_PATH}"
+          export PATH="$GITHUB_WORKSPACE/install/usr/bin:$PATH"
+
+          # Explicit fallback for packages that are looked up via <Pkg>_DIR by some projects.
+          # ThunderTools installs ConfigGenerator CMake package to:
+          #   <prefix>/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake
+          export ConfigGenerator_DIR="$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator"
+
           cmake -G Ninja \
             -S "$GITHUB_WORKSPACE/Tests/L1Tests" \
             -B build/entservices-appgateway-l1tests-only \
             -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/install/usr" \
+            -DCMAKE_PREFIX_PATH="$CMAKE_PREFIX_PATH" \
+            -DConfigGenerator_DIR="$ConfigGenerator_DIR" \
             -DWPEFrameworkPlugins_DIR="$GITHUB_WORKSPACE/install/usr/lib/cmake/WPEFrameworkPlugins" \
             -DDISABLE_SECURITY_TOKEN=ON \
             -DUSE_THUNDER_R4=ON \
