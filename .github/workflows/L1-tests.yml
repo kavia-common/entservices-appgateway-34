@@ -14,10 +14,9 @@ on:
 env:
   BUILD_TYPE: Debug
   THUNDER_REF: "R4.4.1"
-  THUNDERTOOLS_REF: "R4.4.3"
   INTERFACES_REF: "develop"
   AUTOMATICS_UNAME: ${{ secrets.AUTOMATICS_UNAME}}
-  AUTOMATICS_PASSCODE: ${{ secrets.AUTOMATICS_PASSCODE}}
+  AUTOMATICS_PASSCODE: ${{ secrets. AUTOMATICS_PASSCODE}}
 
 jobs:
   L1-tests:
@@ -37,72 +36,66 @@ jobs:
 
     steps:
       - name: Set up cache
-        # Cache expensive build/install dirs.
+        # Cache Thunder/ThunderInterfaces.
+        # https://github.com/actions/cache
+        # https://docs.github.com/en/rest/actions/cache
+        # Modify the key if changing the list.
         if: ${{ !env.ACT }}
         id: cache
         uses: actions/cache@v3
         with:
           path: |
-            build/Thunder
-            build/entservices-apis
-            build/ThunderTools
-            build/googletest
-            install
-          key: ${{ runner.os }}-${{ env.THUNDER_REF }}-${{ env.THUNDERTOOLS_REF }}-${{ env.INTERFACES_REF }}-l1tests-only-v1
+            thunder/build/Thunder
+            thunder/build/entservices-apis
+            thunder/build/ThunderTools
+            thunder/install
+            !thunder/install/etc/WPEFramework/plugins
+            !thunder/install/usr/bin/RdkServicesTest
+            !thunder/install/usr/include/gmock
+            !thunder/install/usr/include/gtest
+            !thunder/install/usr/lib/libgmockd.a
+            !thunder/install/usr/lib/libgmock_maind.a
+            !thunder/install/usr/lib/libgtestd.a
+            !thunder/install/usr/lib/libgtest_maind.a
+            !thunder/install/usr/lib/cmake/GTest
+            !thunder/install/usr/lib/pkgconfig/gmock.pc
+            !thunder/install/usr/lib/pkgconfig/gmock_main.pc
+            !thunder/install/usr/lib/pkgconfig/gtest.pc
+            !thunder/install/usr/lib/pkgconfig/gtest_main.pc
+            !thunder/install/usr/lib/wpeframework/plugins
+          key: ${{ runner.os }}-${{ env.THUNDER_REF }}-${{ env.INTERFACES_REF }}-4
 
       - name: Set up Python
         uses: actions/setup-python@v4
         with:
-          python-version: "3.x"
-
-      - name: Install jsonref
-        run: python3 -m pip install --user -q jsonref
+          python-version: '3.x'
+      - run: pip install jsonref
 
       - name: ACK External Trigger
         run: |
-          echo "Message: External Trigger Received for L1 Tests"
-          echo "Trigger Source: ${{ inputs.caller_source }}"
+           echo "Message: External Trigger Received for L1 Tests"
+           echo "Trigger Source: ${{ inputs.caller_source }}"
+
+      - name: Set up CMake
+        uses: jwlawson/actions-setup-cmake@v1.13
+        with:
+          cmake-version: '3.16.x'
 
       - name: Install packages
-        run: |
+        run: >
           sudo apt update
-          sudo apt install -y \
-            libsqlite3-dev \
-            libcurl4-openssl-dev \
-            valgrind \
-            lcov \
-            clang \
-            libsystemd-dev \
-            libboost-all-dev \
-            libwebsocketpp-dev \
-            meson \
-            libcunit1 \
-            libcunit1-dev \
-            curl \
-            protobuf-compiler-grpc \
-            libgrpc-dev \
-            libgrpc++-dev \
-            libjsoncpp-dev \
-            git \
-            pkg-config \
-            patch \
-            ninja-build \
-            cmake
+          &&
+          sudo apt install -y libsqlite3-dev libcurl4-openssl-dev valgrind lcov clang libsystemd-dev libboost-all-dev libwebsocketpp-dev meson libcunit1 libcunit1-dev curl protobuf-compiler-grpc libgrpc-dev libgrpc++-dev libjsoncpp-dev
 
       - name: Build trower-base64
         run: |
-          if [ ! -d "trower-base64" ]; then
-            git clone --depth 1 https://github.com/tdunning/trower-base64.git
-          fi
-          cd trower-base64
-          meson setup build || meson setup build --reconfigure
-          ninja -C build
-          sudo ninja -C build install
-
-      - name: Checkout entservices-appgateway
-        uses: actions/checkout@v3
-        with:
-          path: entservices-appgateway
+            if [ ! -d "trower-base64" ]; then
+            git clone https://github.com/xmidt-org/trower-base64.git
+            fi
+            cd trower-base64
+            meson setup --warnlevel 3 --werror build
+            ninja -C build
+            sudo ninja -C build install
 
       - name: Checkout Thunder
         if: steps.cache.outputs.cache-hit != 'true'
@@ -110,7 +103,7 @@ jobs:
         with:
           repository: rdkcentral/Thunder
           path: Thunder
-          ref: ${{ env.THUNDER_REF }}
+          ref: ${{env.THUNDER_REF}}
 
       - name: Checkout ThunderTools
         if: steps.cache.outputs.cache-hit != 'true'
@@ -118,7 +111,13 @@ jobs:
         with:
           repository: rdkcentral/ThunderTools
           path: ThunderTools
-          ref: ${{ env.THUNDERTOOLS_REF }}
+          ref: R4.4.3
+
+      - name: Checkout entservices-appgateway
+        if: ${{ inputs.caller_source == 'local' }}
+        uses: actions/checkout@v3
+        with:
+          path: entservices-appgateway
 
       - name: Checkout googletest
         if: steps.cache.outputs.cache-hit != 'true'
@@ -128,105 +127,109 @@ jobs:
           path: googletest
           ref: v1.15.0
 
+      - name: Apply patches ThunderTools
+        run: |  
+          cd $GITHUB_WORKSPACE/ThunderTools
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/00010-R4.4-Add-support-for-project-dir.patch
+          cd -
+
+      - name: Build ThunderTools
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: >
+          cmake -G Ninja
+          -S "$GITHUB_WORKSPACE/ThunderTools"
+          -B build/ThunderTools
+          -DEXCEPTIONS_ENABLE=ON
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
+          -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DGENERIC_CMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          &&
+          cmake --build build/ThunderTools -j8
+          &&
+          cmake --install build/ThunderTools
+
+      - name: Apply patches Thunder
+        run: |
+          cd $GITHUB_WORKSPACE/Thunder
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/error_code_R4_4.patch
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/1004-Add-support-for-project-dir.patch
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/RDKEMW-733-Add-ENTOS-IDS.patch
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/Jsonrpc_dynamic_error_handling.patch
+          cd -
+
+      - name: Build Thunder
+        if: steps.cache.outputs.cache-hit != 'true'
+        run: >
+          cmake -G Ninja
+          -S "$GITHUB_WORKSPACE/Thunder"
+          -B build/Thunder
+          -DMESSAGING=ON
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
+          -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DGENERIC_CMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DBUILD_TYPE=Debug
+          -DBINDING=127.0.0.1
+          -DPORT=55555
+          -DEXCEPTIONS_ENABLE=ON
+          &&
+          cmake --build build/Thunder -j8
+          &&
+          cmake --install build/Thunder
+
       - name: Checkout entservices-apis
         if: steps.cache.outputs.cache-hit != 'true'
         uses: actions/checkout@v3
         with:
           repository: rdkcentral/entservices-apis
           path: entservices-apis
-          ref: ${{ env.INTERFACES_REF }}
+          ref: ${{env.INTERFACES_REF}}
+          #token : ${{ secrets.RDKCM_RDKE }}
+          run: rm -rf $GITHUB_WORKSPACE/entservices-apis/jsonrpc/DTV.json
 
-      - name: Remove DTV.json (workflow parity with script)
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: rm -f "$GITHUB_WORKSPACE/entservices-apis/jsonrpc/DTV.json" || true
-
-      - name: Apply patches ThunderTools (from repo)
+      - name: Apply patches entservices-apis
         run: |
-          cd "$GITHUB_WORKSPACE/ThunderTools"
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/00010-R4.4-Add-support-for-project-dir.patch" || true
-
-      - name: Build ThunderTools
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          set -euo pipefail
-
-          cmake -G Ninja \
-            -S "$GITHUB_WORKSPACE/ThunderTools" \
-            -B build/ThunderTools \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr" \
-            -DCMAKE_VERBOSE_MAKEFILE=ON \
-            -DPROJECT_DIR="$GITHUB_WORKSPACE"
-          cmake --build build/ThunderTools -- -j"$(nproc)"
-          cmake --install build/ThunderTools
-
-          # Sanity check: L1 build later requires find_package(ConfigGenerator).
-          # ThunderTools install must therefore provide:
-          #   install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake
-          test -f "$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
-
-      - name: Configure CMake package discovery for L1 builds
-        run: |
-          set -euo pipefail
-          echo "CMAKE_PREFIX_PATH=$GITHUB_WORKSPACE/install/usr" >> "$GITHUB_ENV"
-          echo "ConfigGenerator_DIR=$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator" >> "$GITHUB_ENV"
-
-      - name: Apply patches Thunder (from repo)
-        run: |
-          cd "$GITHUB_WORKSPACE/Thunder"
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/Use_Legact_Alt_Based_On_ThunderTools_R4.4.3.patch" || true
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/error_code_R4_4.patch" || true
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/1004-Add-support-for-project-dir.patch" || true
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/RDKEMW-733-Add-ENTOS-IDS.patch" || true
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/Jsonrpc_dynamic_error_handling.patch" || true
-
-      - name: Build Thunder
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          cmake -G Ninja \
-            -S "$GITHUB_WORKSPACE/Thunder" \
-            -B build/Thunder \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr" \
-            -DCMAKE_VERBOSE_MAKEFILE=ON \
-            -DPROJECT_DIR="$GITHUB_WORKSPACE"
-          cmake --build build/Thunder -- -j"$(nproc)"
-          cmake --install build/Thunder
-
-      - name: Apply patch entservices-apis (from repo)
-        run: |
-          cd "$GITHUB_WORKSPACE/entservices-apis"
-          patch -p1 < "$GITHUB_WORKSPACE/entservices-appgateway/Tests/patches/RDKEMW-1007.patch" || true
+          cd $GITHUB_WORKSPACE/entservices-apis
+          patch -p1 < $GITHUB_WORKSPACE/Tests/patches/RDKEMW-1007.patch
+          cd -
 
       - name: Build entservices-apis
-        if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          cmake -G Ninja \
-            -S "$GITHUB_WORKSPACE/entservices-apis" \
-            -B build/entservices-apis \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr" \
-            -DCMAKE_VERBOSE_MAKEFILE=ON
-          cmake --build build/entservices-apis -- -j"$(nproc)"
+        run: >
+          cmake -G Ninja
+          -S "$GITHUB_WORKSPACE/entservices-apis"
+          -B build/entservices-apis
+          -DEXCEPTIONS_ENABLE=ON
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
+          -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          &&
+          cmake --build build/entservices-apis -j8
+          &&
           cmake --install build/entservices-apis
 
-      - name: Build googletest (with coverage flags like script)
+      - name: Set clang toolchain
+        if: ${{ matrix.compiler == 'clang' }}
+        run: echo "TOOLCHAIN_FILE=$GITHUB_WORKSPACE/entservices-testframework/Tests/clang.cmake" >> $GITHUB_ENV
+
+      - name: Set gcc/with-coverage toolchain
+        if: ${{ matrix.compiler == 'gcc' && matrix.coverage == 'with-coverage' && !env.ACT }}
+        run: echo "TOOLCHAIN_FILE=$GITHUB_WORKSPACE/entservices-testframework/Tests/gcc-with-coverage.cmake" >> $GITHUB_ENV
+
+      - name: Build googletest
         if: steps.cache.outputs.cache-hit != 'true'
-        run: |
-          cmake -G Ninja \
-            -S "$GITHUB_WORKSPACE/googletest" \
-            -B build/googletest \
-            -DCMAKE_BUILD_TYPE=Debug \
-            -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr" \
-            -DBUILD_GTEST=ON \
-            -DBUILD_GMOCK=ON \
-            -DINSTALL_GTEST=ON \
-            -DCMAKE_C_FLAGS="-O0 -g --coverage -fprofile-arcs -ftest-coverage" \
-            -DCMAKE_CXX_FLAGS="-O0 -g --coverage -fprofile-arcs -ftest-coverage" \
-            -DCMAKE_EXE_LINKER_FLAGS="--coverage" \
-            -DCMAKE_SHARED_LINKER_FLAGS="--coverage" \
-            -DCMAKE_VERBOSE_MAKEFILE=ON
-          cmake --build build/googletest -- -j"$(nproc)"
+        run: >
+          cmake -G Ninja
+          -S "$GITHUB_WORKSPACE/googletest"
+          -B build/googletest
+          -DCMAKE_INSTALL_PREFIX="$GITHUB_WORKSPACE/install/usr"
+          -DCMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DGENERIC_CMAKE_MODULE_PATH="$GITHUB_WORKSPACE/install/tools/cmake"
+          -DBUILD_TYPE=Debug
+          -DBUILD_GMOCK=ON
+          -DBUILD_SHARED_LIBS=OFF
+          -DCMAKE_POSITION_INDEPENDENT_CODE=ON
+          &&
+          cmake --build build/googletest -j8
+          &&
           cmake --install build/googletest
 
       - name: Build AppGateway L1 tests (Tests/L1Tests only; NO install; coverage enabled)
@@ -239,7 +242,7 @@ jobs:
           export COVERAGE_LINKER_FLAGS="--coverage"
 
           cmake -G Ninja \
-            -S "$GITHUB_WORKSPACE/entservices-appgateway/Tests/L1Tests" \
+            -S "$GITHUB_WORKSPACE/Tests/L1Tests" \
             -B build/entservices-appgateway-l1tests-only \
             -DCMAKE_BUILD_TYPE=Debug \
             -DCMAKE_PREFIX_PATH="$GITHUB_WORKSPACE/install/usr" \
@@ -275,14 +278,14 @@ jobs:
       - name: Copy required mock headers into install prefix include/Tests/mocks
         run: |
           mkdir -p "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks"
-          cp -f "$GITHUB_WORKSPACE/entservices-appgateway/Tests/mocks/Module.h" "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks/Module.h"
-          cp -f "$GITHUB_WORKSPACE/entservices-appgateway/Tests/mocks/ServiceMock.h" "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks/ServiceMock.h"
-          cp -f "$GITHUB_WORKSPACE/entservices-appgateway/Tests/mocks/ThunderPortability.h" "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks/ThunderPortability.h"
+          cp -f "$GITHUB_WORKSPACE/Tests/mocks/Module.h" "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks/Module.h"
+          cp -f "$GITHUB_WORKSPACE/Tests/mocks/ServiceMock.h" "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks/ServiceMock.h"
+          cp -f "$GITHUB_WORKSPACE/Tests/mocks/ThunderPortability.h" "$GITHUB_WORKSPACE/install/usr/include/Tests/mocks/ThunderPortability.h"
 
       - name: Stage AppGateway resolution.base.json into config root (avoid /etc)
         run: |
           mkdir -p /tmp/app-gateway
-          cp -f "$GITHUB_WORKSPACE/entservices-appgateway/AppGateway/resolutions/resolution.base.json" /tmp/app-gateway/resolution.base.json
+          cp -f "$GITHUB_WORKSPACE/AppGateway/resolutions/resolution.base.json" /tmp/app-gateway/resolution.base.json
           echo "APPGATEWAY_CONFIG_PATH=/tmp/app-gateway" >> "$GITHUB_ENV"
           ls -la /tmp/app-gateway || true
 
@@ -307,7 +310,7 @@ jobs:
           rc=$?
 
           if [ -f "$(pwd)/AppGatewayL1TestResults.json" ]; then
-            cp -f "$(pwd)/AppGatewayL1TestResults.json" "$GITHUB_WORKSPACE/entservices-appgateway/AppGatewayL1TestResultsWithoutValgrind.json"
+            cp -f "$(pwd)/AppGatewayL1TestResults.json" "$GITHUB_WORKSPACE/AppGatewayL1TestResultsWithoutValgrind.json"
             rm -f "$(pwd)/AppGatewayL1TestResults.json"
           fi
 
