@@ -992,7 +992,14 @@ find "${APPGATEWAY_BUILD_DIR}" -type f -name "*.gcda" -print -delete 2>/dev/null
   # Include:
   #  - install/usr/lib (+ lib64 on some distros)
   #  - install/usr/lib/wpeframework/plugins (local plugin staging, real .so names)
-  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib64:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+  # Some Thunder/ThunderTools installs place runtime libs under:
+  #   - ${INSTALL_USR}/lib
+  #   - ${INSTALL_USR}/lib/wpeframework
+  # while plugins are staged under:
+  #   - ${INSTALL_USR}/lib/wpeframework/plugins
+  #
+  # Include all of them to avoid "libWPEFrameworkMessaging.so.1 not found" style failures.
+  export LD_LIBRARY_PATH="${INSTALL_USR}/lib:${INSTALL_USR}/lib64:${INSTALL_USR}/lib/wpeframework:${INSTALL_USR}/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
 
   # Point AppGatewayImplementation at a non-/etc config root (staged in Step 25b).
   # NOTE: This must be honored by the implementation/test harness; it is the
@@ -1020,6 +1027,15 @@ find "${APPGATEWAY_BUILD_DIR}" -type f -name "*.gcda" -print -delete 2>/dev/null
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test"
     elif [[ -x "${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe" ]]; then
       TEST_BIN="${APPGATEWAY_BUILD_DIR}/Tests/L1Tests/AppGatewayL1Test.exe"
+    fi
+  fi
+
+  # Diagnostics: if available, show missing shared libraries early (non-fatal).
+  if have_cmd ldd && [[ -n "${TEST_BIN}" ]]; then
+    log "Shared library check (ldd) for: ${TEST_BIN}"
+    ( ldd "${TEST_BIN}" | sed -n '1,200p' ) || true
+    if ldd "${TEST_BIN}" 2>/dev/null | grep -q "not found"; then
+      warn "ldd reports missing libraries for ${TEST_BIN}. LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
     fi
   fi
 
@@ -1082,7 +1098,16 @@ elif [[ -f "${LCOVRC_SRC_2}" ]]; then
   log "Using lcovrc: ${LCOVRC_SRC_2}"
   cp "${LCOVRC_SRC_2}" "${HOME}/.lcovrc"
 else
-  warn "lcovrc (.lcovrc_l1) not found; proceeding with default lcov configuration."
+  warn "lcovrc (.lcovrc_l1) not found; proceeding with a minimal local .lcovrc for deterministic behavior."
+  cat > "${HOME}/.lcovrc" <<'EOF'
+# Minimal lcov configuration for CI robustness.
+# Avoid failing the pipeline on common debug-info mismatches and allow empty captures
+# (the script already guards against empty tracefiles before running genhtml).
+geninfo_adjust_src_path = 1
+geninfo_all_blocks = 1
+lcov_branch_coverage = 1
+genhtml_branch_coverage = 1
+EOF
 fi
 
 if [[ ! -d "${APPGATEWAY_BUILD_DIR}" ]]; then
