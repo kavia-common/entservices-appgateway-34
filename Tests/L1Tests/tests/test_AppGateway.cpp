@@ -592,6 +592,13 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
     EXPECT_THAT(resolution, ::testing::HasSubstr("NotAvailable"));
 }
 
+int main(int argc, char** argv)
+{
+    ::testing::InitGoogleTest(&argc, argv);
+    ::testing::AddGlobalTestEnvironment(new WorkerPoolShutdownEnvironment());
+    return RUN_ALL_TESTS();
+}
+
 TEST(AppGatewayImplementationTest, AppGateway_ComRpc_AdditionalContext_WrapsParamsWith_additionalContext)
 {
     const std::string cfg = "/tmp/appgw.comrpc.ctx.cfg.json";

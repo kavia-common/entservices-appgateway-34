@@ -28,6 +28,7 @@
 #include <com/com.h>
 #include <core/core.h>
 #include <map>
+#include <atomic>
 
 
 namespace WPEFramework {
@@ -39,6 +40,16 @@ namespace Plugin {
     public:
         AppGatewayImplementation();
         ~AppGatewayImplementation() override;
+
+        // PUBLIC_INTERFACE
+        bool IsAlive() const
+        {
+            /** Indicates whether this instance is still safe to dispatch work against.
+             *  During teardown, async jobs may still run on the WorkerPool thread.
+             *  Those jobs must not call back into this object once destruction begins.
+             */
+            return mAlive.load(std::memory_order_acquire);
+        }
 
         // We do not allow this plugin to be copied !!
         AppGatewayImplementation(const AppGatewayImplementation&) = delete;
@@ -72,7 +83,7 @@ namespace Plugin {
 
         public:
             RespondJob() = delete;
-        RespondJob(const RespondJob &) = delete;
+            RespondJob(const RespondJob &) = delete;
             RespondJob &operator=(const RespondJob &) = delete;
             ~RespondJob()
             {
@@ -84,19 +95,24 @@ namespace Plugin {
             {
                 return (Core::ProxyType<Core::IDispatch>(Core::ProxyType<RespondJob>::Create(parent, context, payload, origin)));
             }
-            virtual void Dispatch()
+            void Dispatch() override
             {
-                if(ContextUtils::IsOriginGateway(mDestination)) {
-                    mParent.ReturnMessageInSocket(mContext, std::move(mPayload));
-                } else {
-                    mParent.SendToLaunchDelegate(mContext, std::move(mPayload));
+                // WorkerPool jobs may outlive the plugin instance during test/act shutdown.
+                // Never call back into the plugin if destruction has started.
+                if (mParent.IsAlive() == false) {
+                    return;
                 }
-                
+
+                if(ContextUtils::IsOriginGateway(mDestination)) {
+                    mParent.ReturnMessageInSocket(mContext, mPayload);
+                } else {
+                    mParent.SendToLaunchDelegate(mContext, mPayload);
+                }
             }
 
         private:
             AppGatewayImplementation &mParent;
-            const std::string mPayload;
+            std::string mPayload;
             const Context mContext;
             const std::string mDestination;
         };
@@ -130,6 +146,10 @@ namespace Plugin {
         Exchange::IAppGatewayResponder *mAppGatewayResponder;
         Exchange::IAppGatewayResponder *mInternalGatewayResponder; // Shared pointer to InternalGatewayResponder
         Exchange::IAppGatewayAuthenticator *mAuthenticator; // Shared pointer to Authenticator
+
+        // Set false during destruction before releasing mService, so async jobs can bail out safely.
+        std::atomic_bool mAlive;
+
         uint32_t InitializeResolver();
         uint32_t InitializeWebsocket();
         uint32_t ProcessComRpcRequest(const Context &context, const string& alias, const string& method, const string& params, const string& origin, string &resolution);

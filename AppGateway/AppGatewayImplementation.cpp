@@ -155,7 +155,8 @@ namespace WPEFramework
             mAppNotifications(nullptr),
             mAppGatewayResponder(nullptr),
             mInternalGatewayResponder(nullptr),
-            mAuthenticator(nullptr)
+            mAuthenticator(nullptr),
+            mAlive(true)
         {
             LOGINFO("AppGatewayImplementation constructor");
         }
@@ -163,6 +164,11 @@ namespace WPEFramework
         AppGatewayImplementation::~AppGatewayImplementation()
         {
             LOGINFO("AppGatewayImplementation destructor");
+
+            // Mark as not alive before releasing any interfaces. Any queued WorkerPool jobs
+            // must observe this and bail out without dereferencing released members.
+            mAlive.store(false, std::memory_order_release);
+
             if (nullptr != mService)
             {
                 mService->Release();
