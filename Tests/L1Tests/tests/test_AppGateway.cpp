@@ -595,7 +595,6 @@ TEST(AppGatewayImplementationTest, AppGateway_ComRpc_RequestHandlerMissing_NotAv
 int main(int argc, char** argv)
 {
     ::testing::InitGoogleTest(&argc, argv);
-    ::testing::AddGlobalTestEnvironment(new WorkerPoolShutdownEnvironment());
     return RUN_ALL_TESTS();
 }
 
