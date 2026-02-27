@@ -324,7 +324,61 @@ write_config(PLUGINS ${PLUGIN_NAME})
 # AppGatewayL1Test executable (required by the workflow/script)
 # -----------------------------------------------------------------------------
 if(PLUGIN_APPGATEWAY)
-    find_package(GTest REQUIRED)
+    # Prefer CONFIG mode so imported targets (GTest::gtest, GTest::gmock, etc.) are defined.
+    # In some environments CMake's module-mode FindGTest is picked up first and only sets
+    # variables like GTEST_LIBRARIES (leading to "Found GTest: <path>/libgtest.a" but
+    # missing GTest:: targets). L1Tests links using imported targets, so we must ensure
+    # they exist.
+    find_package(GTest REQUIRED CONFIG)
+
+    # Fallback compatibility: if we still don't have the imported targets (e.g. if a toolchain
+    # injects a FindGTest-only environment), create them from the legacy variables.
+    if(NOT TARGET GTest::gtest)
+        find_package(GTest REQUIRED) # may populate GTEST_LIBRARIES / GTEST_INCLUDE_DIRS
+
+        if(GTEST_LIBRARIES)
+            add_library(GTest::gtest UNKNOWN IMPORTED)
+            set_target_properties(GTest::gtest PROPERTIES
+                IMPORTED_LOCATION "${GTEST_LIBRARIES}"
+                INTERFACE_INCLUDE_DIRECTORIES "${GTEST_INCLUDE_DIRS}"
+            )
+        endif()
+
+        if(GTEST_MAIN_LIBRARIES)
+            add_library(GTest::gtest_main UNKNOWN IMPORTED)
+            set_target_properties(GTest::gtest_main PROPERTIES
+                IMPORTED_LOCATION "${GTEST_MAIN_LIBRARIES}"
+                INTERFACE_LINK_LIBRARIES "GTest::gtest"
+                INTERFACE_INCLUDE_DIRECTORIES "${GTEST_INCLUDE_DIRS}"
+            )
+        endif()
+
+        if(GMOCK_LIBRARIES)
+            add_library(GTest::gmock UNKNOWN IMPORTED)
+            set_target_properties(GTest::gmock PROPERTIES
+                IMPORTED_LOCATION "${GMOCK_LIBRARIES}"
+                INTERFACE_LINK_LIBRARIES "GTest::gtest"
+                INTERFACE_INCLUDE_DIRECTORIES "${GTEST_INCLUDE_DIRS}"
+            )
+        endif()
+
+        if(GMOCK_MAIN_LIBRARIES)
+            add_library(GTest::gmock_main UNKNOWN IMPORTED)
+            set_target_properties(GTest::gmock_main PROPERTIES
+                IMPORTED_LOCATION "${GMOCK_MAIN_LIBRARIES}"
+                INTERFACE_LINK_LIBRARIES "GTest::gmock"
+                INTERFACE_INCLUDE_DIRECTORIES "${GTEST_INCLUDE_DIRS}"
+            )
+        endif()
+
+        if(NOT TARGET GTest::gtest OR NOT TARGET GTest::gmock OR NOT TARGET GTest::gtest_main)
+            message(FATAL_ERROR
+                "GTest imported targets not available. "
+                "Ensure GTestConfig.cmake is discoverable via CMAKE_PREFIX_PATH "
+                "(e.g. -DCMAKE_PREFIX_PATH=<repo>/install/usr)."
+            )
+        endif()
+    endif()
 
     add_executable(AppGatewayL1Test ${APPGATEWAY_L1TEST_SRC})
 
