@@ -447,14 +447,12 @@ jobs:
           echo "APPGATEWAY_CONFIG_PATH=/tmp/app-gateway" >> "$GITHUB_ENV"
           ls -la /tmp/app-gateway || true
 
-      - name: Run AppGateway L1 tests (continue-on-error to still generate coverage + upload artifacts)
+      - name: Run AppGateway L1 tests (gdb batch for reliable backtrace; continue-on-error for artifact upload)
         continue-on-error: true
         run: |
           set -euo pipefail
 
-          # Ensure we get core dumps on crashes (including SIGSEGV) so we can extract a backtrace.
-          # Note: On GitHub-hosted runners core_pattern is controlled by the OS; on act it often
-          # writes core files into the current working directory.
+          # Ensure we *try* to get core dumps, but do not rely on them (act often suppresses core file creation).
           ulimit -c unlimited || true
           echo "Core ulimit: $(ulimit -c || true)"
 
@@ -487,12 +485,52 @@ jobs:
             fi
           fi
 
-          # Run tests. If it segfaults, capture diagnostics from core dump if available.
+          # Always attempt to capture a backtrace even when core files are not created (common under act).
+          #
+          # We run the test under gdb in batch mode and print:
+          #  - gdb "run" output
+          #  - signal reason (if any)
+          #  - full backtraces for all threads
+          #
+          # Note: This does not require core dump support.
+          BACKTRACE_OUT="$GITHUB_WORKSPACE/act_segv_backtrace.txt"
+          GDB_OUT="$GITHUB_WORKSPACE/act_gdb_output.txt"
+          DMESG_OUT="$GITHUB_WORKSPACE/act_dmesg_tail.txt"
+
+          rm -f "${BACKTRACE_OUT}" "${GDB_OUT}" "${DMESG_OUT}" || true
+
           set +e
-          "${TEST_BIN}" --gtest_repeat=1
-          rc=$?
+          if command -v gdb >/dev/null 2>&1; then
+            echo "Running L1 tests under gdb (batch mode) to ensure backtrace capture..."
+            gdb -q -n -batch \
+              -ex "set pagination off" \
+              -ex "set confirm off" \
+              -ex "handle SIGPIPE nostop noprint pass" \
+              -ex "run --gtest_repeat=1" \
+              -ex "echo \n\n----- gdb: stop reason -----\n" \
+              -ex "info program" \
+              -ex "echo \n\n----- gdb: registers -----\n" \
+              -ex "info registers" \
+              -ex "echo \n\n----- gdb: threads -----\n" \
+              -ex "info threads" \
+              -ex "echo \n\n----- gdb: bt full (all threads) -----\n" \
+              -ex "thread apply all bt full" \
+              -ex "echo \n\n----- gdb: bt full (current) -----\n" \
+              -ex "bt full" \
+              --args "${TEST_BIN}" \
+              2>&1 | tee "${GDB_OUT}"
+            rc=${PIPESTATUS[0]}
+            # Extract the most relevant section for quick viewing.
+            # Keep full gdb output separately to avoid truncation in artifact viewers.
+            grep -n -A9999 -E "----- gdb: (stop reason|bt full)" "${GDB_OUT}" > "${BACKTRACE_OUT}" || true
+          else
+            echo "gdb not available; running test binary directly (backtrace may be unavailable if no core file is produced)."
+            "${TEST_BIN}" --gtest_repeat=1
+            rc=$?
+          fi
           set -e
 
+          # Preserve json test output if produced.
           if [ -f "$(pwd)/AppGatewayL1TestResults.json" ]; then
             cp -f "$(pwd)/AppGatewayL1TestResults.json" "$GITHUB_WORKSPACE/AppGatewayL1TestResultsWithoutValgrind.json"
             rm -f "$(pwd)/AppGatewayL1TestResults.json"
@@ -500,23 +538,15 @@ jobs:
 
           if [ "${rc}" -ne 0 ]; then
             echo "Test binary failed with exit code: ${rc}"
-            echo "Searching for core dumps..."
+
+            echo "Workspace listing (for crash diagnostics):"
             ls -la . || true
 
-            # Best-effort: find the newest core* file in workspace.
-            CORE_FILE="$(ls -1t core* 2>/dev/null | head -n 1 || true)"
-            if [ -n "${CORE_FILE}" ] && command -v gdb >/dev/null 2>&1; then
-              echo "Found core file: ${CORE_FILE}"
-              echo "Extracting backtrace with gdb..."
-              gdb -q -n -batch \
-                -ex "set pagination off" \
-                -ex "thread apply all bt full" \
-                -ex "bt full" \
-                "${TEST_BIN}" "${CORE_FILE}" \
-                | tee "$GITHUB_WORKSPACE/act_segv_backtrace.txt" || true
-            else
-              echo "No core file found or gdb missing; cannot extract backtrace."
-            fi
+            echo "Best-effort core dump discovery (may be empty under act):"
+            ls -la core* 2>/dev/null || true
+
+            echo "Capturing dmesg tail (best-effort; may require privileges):"
+            dmesg | tail -n 200 > "${DMESG_OUT}" 2>/dev/null || true
           fi
 
           echo "L1_TEST_EXIT_CODE=${rc}" >> "$GITHUB_ENV"
@@ -578,6 +608,8 @@ jobs:
             coverage/
             entservices-appgateway/AppGatewayL1TestResultsWithoutValgrind.json
             entservices-appgateway/act_segv_backtrace.txt
+            entservices-appgateway/act_gdb_output.txt
+            entservices-appgateway/act_dmesg_tail.txt
             entservices-appgateway/core*
           if-no-files-found: warn
 
