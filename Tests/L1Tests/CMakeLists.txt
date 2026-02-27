@@ -70,6 +70,31 @@ if(USE_THUNDER_R4)
     add_compile_definitions(USE_THUNDER_R4)
 endif()
 
+# ---------------------------------------------------------------------------
+# ConfigGenerator integration (L1Tests-only builds)
+#
+# AppGateway/CMakeLists.txt calls `write_config(...)`, which is defined by
+# WPEFramework's FindConfigGenerator.cmake module. In a L1Tests-only configure
+# the repo root CMakeLists.txt is not executed, so we must include it here.
+# ---------------------------------------------------------------------------
+if(NOT COMMAND write_config)
+    # Try to locate FindConfigGenerator.cmake from the installed Thunder prefix.
+    # In this CI flow, CMAKE_PREFIX_PATH includes <repo>/install/usr.
+    find_path(_WPEFW_MODULES_DIR
+        NAMES FindConfigGenerator.cmake
+        HINTS
+            "${CMAKE_INSTALL_PREFIX}/include/WPEFramework/Modules"
+            "${CMAKE_PREFIX_PATH}/include/WPEFramework/Modules"
+        PATH_SUFFIXES include/WPEFramework/Modules
+    )
+
+    if(_WPEFW_MODULES_DIR AND EXISTS "${_WPEFW_MODULES_DIR}/FindConfigGenerator.cmake")
+        include("${_WPEFW_MODULES_DIR}/FindConfigGenerator.cmake")
+    else()
+        message(FATAL_ERROR "Could not locate FindConfigGenerator.cmake to provide write_config() for L1Tests-only builds.")
+    endif()
+endif()
+
 if(PLUGIN_APPGATEWAY)
     # AppGateway/CMakeLists.txt defines the implementation library target
     #   WPEFrameworkAppGateway
