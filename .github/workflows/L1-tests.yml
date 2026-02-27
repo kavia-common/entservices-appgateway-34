@@ -232,6 +232,48 @@ jobs:
           &&
           cmake --install build/googletest
 
+      - name: Ensure ConfigGenerator executable exists in local prefix (act/CI)
+        run: |
+          set -euo pipefail
+
+          prefix="$GITHUB_WORKSPACE/install/usr"
+
+          # Some downstream CMake configs require an actual `ConfigGenerator` executable
+          # under the install prefix (typically <prefix>/bin/ConfigGenerator).
+          # In this repo layout we already vendor the python implementation under:
+          #   <prefix>/sbin/ConfigGenerator/config_generator.py
+          # For act/CI (and to be robust to variations in ThunderTools install layouts),
+          # we stage a small wrapper executable into <prefix>/bin.
+          mkdir -p "$prefix/bin"
+
+          # If an executable is already present (e.g., from ThunderTools install), keep it.
+          if command -v "$prefix/bin/ConfigGenerator" >/dev/null 2>&1; then
+            echo "ConfigGenerator already present at: $prefix/bin/ConfigGenerator"
+            exit 0
+          fi
+
+          impl="$prefix/sbin/ConfigGenerator/config_generator.py"
+          if [ ! -f "$impl" ]; then
+            echo "ERROR: Expected ConfigGenerator python implementation not found at: $impl"
+            echo "Prefix contents for debugging:"
+            find "$prefix" -maxdepth 4 -type f -name 'config_generator.py' -o -name 'ConfigGenerator' 2>/dev/null || true
+            exit 1
+          fi
+
+          cat > "$prefix/bin/ConfigGenerator" <<'EOF'
+          #!/usr/bin/env bash
+          set -euo pipefail
+
+          # Wrapper used in CI/act to provide a stable `ConfigGenerator` executable
+          # in the local install prefix. Delegates to the vendored python tool.
+          SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+          PREFIX="$(cd "${SCRIPT_DIR}/.." && pwd)"
+          exec python3 "${PREFIX}/sbin/ConfigGenerator/config_generator.py" "$@"
+          EOF
+
+          chmod +x "$prefix/bin/ConfigGenerator"
+          echo "Installed ConfigGenerator wrapper at: $prefix/bin/ConfigGenerator"
+
       - name: Ensure ConfigGenerator CMake package config exists in local prefix (act/CI)
         run: |
           set -euo pipefail
