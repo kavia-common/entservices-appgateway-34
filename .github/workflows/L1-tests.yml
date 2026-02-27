@@ -85,7 +85,7 @@ jobs:
         run: >
           sudo apt update
           &&
-          sudo apt install -y libsqlite3-dev libcurl4-openssl-dev valgrind lcov clang libsystemd-dev libboost-all-dev libwebsocketpp-dev meson libcunit1 libcunit1-dev curl protobuf-compiler-grpc libgrpc-dev libgrpc++-dev libjsoncpp-dev
+          sudo apt install -y libsqlite3-dev libcurl4-openssl-dev valgrind lcov clang libsystemd-dev libboost-all-dev libwebsocketpp-dev meson libcunit1 libcunit1-dev curl protobuf-compiler-grpc libgrpc-dev libgrpc++-dev libjsoncpp-dev gdb
 
       - name: Build trower-base64
         run: |
@@ -451,6 +451,16 @@ jobs:
         continue-on-error: true
         run: |
           set -euo pipefail
+
+          # Ensure we get core dumps on crashes (including SIGSEGV) so we can extract a backtrace.
+          # Note: On GitHub-hosted runners core_pattern is controlled by the OS; on act it often
+          # writes core files into the current working directory.
+          ulimit -c unlimited || true
+          echo "Core ulimit: $(ulimit -c || true)"
+
+          # Keep test ordering deterministic to reduce act-only timing variance.
+          export GTEST_SHUFFLE=0
+
           find build/entservices-appgateway-l1tests-only -type f -name "*.gcda" -print -delete 2>/dev/null || true
 
           export PATH="$GITHUB_WORKSPACE/install/usr/bin:${PATH}"
@@ -477,12 +487,36 @@ jobs:
             fi
           fi
 
-          "${TEST_BIN}"
+          # Run tests. If it segfaults, capture diagnostics from core dump if available.
+          set +e
+          "${TEST_BIN}" --gtest_repeat=1
           rc=$?
+          set -e
 
           if [ -f "$(pwd)/AppGatewayL1TestResults.json" ]; then
             cp -f "$(pwd)/AppGatewayL1TestResults.json" "$GITHUB_WORKSPACE/AppGatewayL1TestResultsWithoutValgrind.json"
             rm -f "$(pwd)/AppGatewayL1TestResults.json"
+          fi
+
+          if [ "${rc}" -ne 0 ]; then
+            echo "Test binary failed with exit code: ${rc}"
+            echo "Searching for core dumps..."
+            ls -la . || true
+
+            # Best-effort: find the newest core* file in workspace.
+            CORE_FILE="$(ls -1t core* 2>/dev/null | head -n 1 || true)"
+            if [ -n "${CORE_FILE}" ] && command -v gdb >/dev/null 2>&1; then
+              echo "Found core file: ${CORE_FILE}"
+              echo "Extracting backtrace with gdb..."
+              gdb -q -n -batch \
+                -ex "set pagination off" \
+                -ex "thread apply all bt full" \
+                -ex "bt full" \
+                "${TEST_BIN}" "${CORE_FILE}" \
+                | tee "$GITHUB_WORKSPACE/act_segv_backtrace.txt" || true
+            else
+              echo "No core file found or gdb missing; cannot extract backtrace."
+            fi
           fi
 
           echo "L1_TEST_EXIT_CODE=${rc}" >> "$GITHUB_ENV"
@@ -543,6 +577,8 @@ jobs:
           path: |
             coverage/
             entservices-appgateway/AppGatewayL1TestResultsWithoutValgrind.json
+            entservices-appgateway/act_segv_backtrace.txt
+            entservices-appgateway/core*
           if-no-files-found: warn
 
       - name: Fail job if L1 tests failed (after artifacts/coverage)
