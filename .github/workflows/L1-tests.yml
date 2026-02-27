@@ -232,6 +232,63 @@ jobs:
           &&
           cmake --install build/googletest
 
+      - name: Ensure ConfigGenerator CMake package config exists in local prefix (act/CI)
+        run: |
+          set -euo pipefail
+
+          prefix="$GITHUB_WORKSPACE/install/usr"
+          pkgdir="$prefix/lib/cmake/ConfigGenerator"
+          cfg="$pkgdir/ConfigGeneratorConfig.cmake"
+          ver="$pkgdir/ConfigGeneratorConfigVersion.cmake"
+
+          mkdir -p "$pkgdir"
+
+          # ThunderTools typically installs the Find-module here; consumers later call find_package(ConfigGenerator).
+          findmod="$prefix/include/WPEFramework/Modules/FindConfigGenerator.cmake"
+
+          if [ ! -f "$cfg" ]; then
+            echo "ConfigGeneratorConfig.cmake missing; generating minimal package config at: $cfg"
+            if [ ! -f "$findmod" ]; then
+              echo "ERROR: Expected FindConfigGenerator.cmake not found at: $findmod"
+              exit 1
+            fi
+
+            cat > "$cfg" <<'EOF'
+          # Minimal ConfigGenerator package config for CI builds.
+          #
+          # Purpose:
+          # - WPEFrameworkPluginsConfig.cmake calls: find_package(ConfigGenerator REQUIRED)
+          # - Thunder/ThunderTools provide a Find-module installed under:
+          #     <prefix>/include/WPEFramework/Modules/FindConfigGenerator.cmake
+          # - CMAKE_MODULE_PATH does not normally include that directory.
+          #
+          # This package config bridges the gap by adding the module directory to
+          # CMAKE_MODULE_PATH, then delegating to the Find-module in MODULE mode.
+          include(CMakeFindDependencyMacro)
+
+          set(_cg_module_dir "${CMAKE_CURRENT_LIST_DIR}/../../../include/WPEFramework/Modules")
+          get_filename_component(_cg_module_dir "${_cg_module_dir}" ABSOLUTE)
+
+          if(EXISTS "${_cg_module_dir}/FindConfigGenerator.cmake")
+              list(PREPEND CMAKE_MODULE_PATH "${_cg_module_dir}")
+          endif()
+
+          find_package(ConfigGenerator REQUIRED MODULE)
+          EOF
+          fi
+
+          if [ ! -f "$ver" ]; then
+            # A minimal version file so CMake considers it a well-formed package.
+            cat > "$ver" <<'EOF'
+          set(PACKAGE_VERSION "0.0.0")
+          set(PACKAGE_VERSION_COMPATIBLE TRUE)
+          set(PACKAGE_VERSION_EXACT FALSE)
+          EOF
+          fi
+
+          echo "ConfigGenerator package contents:"
+          ls -la "$pkgdir"
+
       - name: "Sanity check: ConfigGenerator package is installed"
         run: |
           set -euo pipefail
