@@ -570,20 +570,48 @@ jobs:
           cp -rf $(pwd)/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithValgrind.json &&
           rm -rf $(pwd)/rdkL1TestResults.json
 
-      - name: Generate coverage
-        if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
+      - name: Generate coverage report (lcov + HTML via genhtml)
+        # NOTE:
+        # - Historically, L1 HTML coverage was generated into `coverage/`, while local users looked
+        #   for `coverage-html/` (as used by L2). We now generate into `coverage-html/`.
+        # - Coverage generation was skipped entirely under `act` via `!env.ACT`, which matches the
+        #   reported scenario. We now run best-effort even under act.
+        if: ${{ matrix.coverage == 'with-coverage' }}
+        continue-on-error: true
         run: |
           set -euo pipefail
 
-          cp "$GITHUB_WORKSPACE/Tests/L1Tests/.lcovrc_l1" ~/.lcovrc
+          ARTIFACT_ROOT="$GITHUB_WORKSPACE"
+          rm -rf "$ARTIFACT_ROOT/coverage-html" coverage.info filtered_coverage.info coverage || true
+          mkdir -p "$ARTIFACT_ROOT/coverage-html"
+
+          # Ensure we use the L1 lcov configuration.
+          if [ -f "$GITHUB_WORKSPACE/Tests/L1Tests/.lcovrc_l1" ]; then
+            cp "$GITHUB_WORKSPACE/Tests/L1Tests/.lcovrc_l1" ~/.lcovrc
+          fi
+
+          echo "lcov version:"
+          lcov --version || true
+          echo "genhtml version:"
+          genhtml --version || true
 
           build_dir="$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only"
           gcov_out_root="$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
+          echo "Debug: listing gcda/gcno files (top 200) under build dir:"
+          find "${build_dir}" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
+          echo "Debug: listing gcda/gcno files (top 200) under GCOV_PREFIX dir:"
+          find "${gcov_out_root}" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
+
           # Capture coverage from both:
           #  - build dir (in case some gcda ended up there)
           #  - isolated GCOV_PREFIX dir (preferred)
-          lcov -c -o coverage.info -d "${build_dir}" -d "${gcov_out_root}"
+          lcov -c -o coverage.info -d "${build_dir}" -d "${gcov_out_root}" || true
+
+          if [ ! -s coverage.info ]; then
+            echo "coverage.info missing/empty; skipping filtering + HTML generation"
+            exit 0
+          fi
 
           lcov \
             -r coverage.info \
@@ -594,12 +622,23 @@ jobs:
             '*/Tests/mocks/*' \
             '*/Tests/L1Tests/tests/*' \
             '*/Thunder/*' \
-            -o filtered_coverage.info
+            -o filtered_coverage.info || true
+
+          if [ ! -s filtered_coverage.info ]; then
+            echo "filtered_coverage.info missing/empty; skipping HTML generation"
+            exit 0
+          fi
 
           genhtml \
-            -o coverage \
-            -t "entservices-appgateway coverage" \
-            filtered_coverage.info
+            -o "$ARTIFACT_ROOT/coverage-html" \
+            -t "entservices-appgateway L1 coverage" \
+            filtered_coverage.info || true
+
+          if [ -f "$ARTIFACT_ROOT/coverage-html/index.html" ]; then
+            echo "Generated HTML coverage at: coverage-html/index.html"
+          else
+            echo "HTML coverage index.html not generated (see genhtml output above)."
+          fi
 
       - name: Upload artifacts
         if: ${{ !env.ACT }}
@@ -607,6 +646,9 @@ jobs:
         with:
           name: artifacts-L1-appgateway
           path: |
+            coverage-html/
+            coverage.info
+            filtered_coverage.info
             coverage/
             valgrind_log
             rdkL1TestResultsWithoutValgrind.json
