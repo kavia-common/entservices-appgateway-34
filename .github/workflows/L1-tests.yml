@@ -467,266 +467,65 @@ jobs:
           echo "APPGATEWAY_CONFIG_PATH=/tmp/app-gateway" >> "$GITHUB_ENV"
           ls -la /tmp/app-gateway || true
 
-      - name: Zero coverage counters (gcda baseline)
+      - name: Run unit tests without valgrind
+        run: >
+          PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
+          GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+          build/entservices-appgateway-l1tests-only/AppGatewayL1Test &&
+          cp -rf $(pwd)/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json &&
+          rm -rf $(pwd)/rdkL1TestResults.json
+
+      - name: Run unit tests with valgrind
+        if: ${{ !env.ACT }}
+        run: >
+          PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
+          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
+          GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+          valgrind
+          --tool=memcheck
+          --log-file=valgrind_log
+          --leak-check=yes
+          --show-reachable=yes
+          --track-fds=yes
+          --fair-sched=try
+          build/entservices-appgateway-l1tests-only/AppGatewayL1Test &&
+          cp -rf $(pwd)/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithValgrind.json &&
+          rm -rf $(pwd)/rdkL1TestResults.json
+
+      - name: Generate coverage
         if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
-        run: |
-          set -euo pipefail
-          # Reset counters so the capture reflects only this test run.
-          # (If no gcda exist yet, this is harmless.)
-          lcov --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" --zerocounters || true
+        run: >
+          cp $GITHUB_WORKSPACE/Tests/L1Tests/.lcovrc_l1 ~/.lcovrc
+          &&
+          lcov -c
+          -o coverage.info
+          -d build/entservices-appgateway-l1tests-only
+          &&
+          lcov
+          -r coverage.info
+          '/usr/include/*'
+          '*/build/entservices-appgateway-l1tests-only/_deps/*'
+          '*/install/usr/include/*'
+          '*/Tests/headers/*'
+          '*/Tests/mocks/*'
+          '*/Tests/L1Tests/tests/*'
+          '*/Thunder/*'
+          -o filtered_coverage.info
+          &&
+          genhtml
+          -o coverage
+          -t "entservices-appgateway coverage"
+          filtered_coverage.info
 
-      - name: Run AppGateway L1 tests (capture real exit code; run gdb only on failure)
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-
-          # Ensure we *try* to get core dumps, but do not rely on them (act often suppresses core file creation).
-          ulimit -c unlimited || true
-          echo "Core ulimit: $(ulimit -c || true)"
-
-          # Keep test ordering deterministic to reduce act-only timing variance.
-          export GTEST_SHUFFLE=0
-
-          export PATH="$GITHUB_WORKSPACE/install/usr/bin:${PATH}"
-
-          # act often has a different runtime linker search path than GitHub-hosted runners.
-          # Include all relevant Thunder/WPEFramework runtime lib locations.
-          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib64:$GITHUB_WORKSPACE/install/usr/lib/wpeframework:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
-
-          export APPGATEWAY_CONFIG_PATH="${APPGATEWAY_CONFIG_PATH:-/tmp/app-gateway}"
-
-          # Keep all outputs under a stable artifact root that upload-artifact can find.
-          ARTIFACT_ROOT="$GITHUB_WORKSPACE/entservices-appgateway"
-          mkdir -p "$ARTIFACT_ROOT"
-
-          BUILD_DIR="build/entservices-appgateway-l1tests-only"
-          TEST_BIN="${BUILD_DIR}/AppGatewayL1Test"
-          if [ ! -x "${TEST_BIN}" ]; then
-            echo "AppGatewayL1Test not found at ${TEST_BIN}"
-            echo "L1_TEST_EXIT_CODE=127" >> "$GITHUB_ENV"
-            exit 127
-          fi
-
-          # Run from build dir so GCC writes *.gcda next to the compiled objects.
-          cd "${BUILD_DIR}"
-
-          # Preflight shared libraries to catch missing runtime deps early (non-fatal).
-          if command -v ldd >/dev/null 2>&1; then
-            echo "ldd preflight for: ${TEST_BIN}"
-            ldd "./AppGatewayL1Test" || true
-            if ldd "./AppGatewayL1Test" 2>/dev/null | grep -q "not found"; then
-              echo "WARNING: ldd reports missing libraries; LD_LIBRARY_PATH=${LD_LIBRARY_PATH}"
-            fi
-          fi
-
-          RESULTS_JSON_LOCAL="$(pwd)/AppGatewayL1TestResults.json"
-          export GTEST_OUTPUT="json:${RESULTS_JSON_LOCAL}"
-
-          # 1) Run tests directly to get a trustworthy exit code (avoid gdb affecting it).
-          set +e
-          "./AppGatewayL1Test" --gtest_repeat=1
-          rc=$?
-          set -e
-
-          # Stage json test output if produced.
-          if [ -s "${RESULTS_JSON_LOCAL}" ]; then
-            cp -f "${RESULTS_JSON_LOCAL}" "$ARTIFACT_ROOT/AppGatewayL1TestResultsWithoutValgrind.json"
-            rm -f "${RESULTS_JSON_LOCAL}" || true
-          fi
-
-          # 2) On failure, run under gdb (best-effort) to capture a backtrace for artifacts.
-          BACKTRACE_OUT="$ARTIFACT_ROOT/act_segv_backtrace.txt"
-          GDB_OUT="$ARTIFACT_ROOT/act_gdb_output.txt"
-          DMESG_OUT="$ARTIFACT_ROOT/act_dmesg_tail.txt"
-          rm -f "${BACKTRACE_OUT}" "${GDB_OUT}" "${DMESG_OUT}" || true
-
-          if [ "${rc}" -ne 0 ]; then
-            echo "Test binary failed with exit code: ${rc}"
-
-            if command -v gdb >/dev/null 2>&1; then
-              echo "Re-running failing test under gdb (batch mode) to capture backtrace..."
-              set +e
-              gdb -q -n -batch \
-                -ex "set pagination off" \
-                -ex "set confirm off" \
-                -ex "handle SIGPIPE nostop noprint pass" \
-                -ex "run --gtest_repeat=1" \
-                -ex "echo \n\n----- gdb: stop reason -----\n" \
-                -ex "info program" \
-                -ex "echo \n\n----- gdb: threads -----\n" \
-                -ex "info threads" \
-                -ex "echo \n\n----- gdb: bt full (all threads) -----\n" \
-                -ex "thread apply all bt full" \
-                -ex "echo \n\n----- gdb: bt full (current) -----\n" \
-                -ex "bt full" \
-                --args "./AppGatewayL1Test" \
-                2>&1 | tee "${GDB_OUT}"
-              set -e
-
-              # Extract the most relevant section for quick viewing.
-              if ! grep -n -A9999 -E -- "----- gdb: (stop reason|bt full)" "${GDB_OUT}" > "${BACKTRACE_OUT}"; then
-                echo "INFO: Expected gdb markers not found; writing head of gdb output to ${BACKTRACE_OUT} for debugging."
-                head -n 200 "${GDB_OUT}" > "${BACKTRACE_OUT}" || true
-              fi
-            fi
-
-            echo "Build-dir listing (for crash diagnostics):"
-            ls -la . || true
-
-            echo "Best-effort core dump discovery:"
-            ls -la core* 2>/dev/null || true
-
-            echo "Capturing dmesg tail (best-effort; may require privileges):"
-            dmesg | tail -n 200 > "${DMESG_OUT}" 2>/dev/null || true
-          fi
-
-          # Record the *test* exit code for the final gating step.
-          echo "L1_TEST_EXIT_CODE=${rc}" >> "$GITHUB_ENV"
-
-          # Do not fail this step; the final 'Fail job if L1 tests failed' step gates the job.
-          exit 0
-
-      - name: Generate coverage report (lcov + HTML via genhtml)
-        if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
-        continue-on-error: true
-        run: |
-          set -euo pipefail
-
-          ARTIFACT_ROOT="$GITHUB_WORKSPACE/entservices-appgateway"
-          mkdir -p "$ARTIFACT_ROOT"
-
-          rm -rf coverage coverage.info filtered_coverage.info appgateway_only_coverage.info "$ARTIFACT_ROOT/coverage-html" || true
-
-          echo "lcov version:"
-          lcov --version || true
-          echo "genhtml version:"
-          genhtml --version || true
-
-          echo "Debug: listing gcda/gcno files (top 200) under build dir:"
-          find "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
-
-          # lcov/geninfo flag compatibility:
-          # Some versions reject `--ignore-errors mismatch` and/or `--ignore-errors empty`.
-          # To keep CI compatible, detect support and fall back to a safe set (or none).
-          ignore_errors=""
-          if lcov --help 2>&1 | grep -qE -- "--ignore-errors(=| )"; then
-            supported=""
-            if lcov --help 2>&1 | grep -q "mismatch"; then
-              supported="mismatch"
-            fi
-            if lcov --help 2>&1 | grep -q "empty"; then
-              supported="${supported:+${supported},}empty"
-            fi
-            ignore_errors="$supported"
-          fi
-          echo "Using lcov --ignore-errors: ${ignore_errors:-<none>}"
-
-          # Capture coverage from the build tree. Keep verbose output to diagnose empty captures.
-          # Do not fail the job if capture fails; artifacts and test logs should still upload.
-          if [ -n "${ignore_errors}" ]; then
-            lcov --capture \
-              --base-directory "$GITHUB_WORKSPACE" \
-              --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" \
-              --output-file coverage.info \
-              --ignore-errors "${ignore_errors}" \
-              --rc lcov_branch_coverage=0 \
-              --verbose || true
-          else
-            lcov --capture \
-              --base-directory "$GITHUB_WORKSPACE" \
-              --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" \
-              --output-file coverage.info \
-              --rc lcov_branch_coverage=0 \
-              --verbose || true
-          fi
-
-          # Always stage raw coverage.info if it exists, even if later filtering/html generation fails.
-          if [ -s coverage.info ]; then
-            cp -f coverage.info "$ARTIFACT_ROOT/coverage.info"
-          else
-            echo "coverage.info missing/empty; skipping filtering + HTML generation"
-            exit 0
-          fi
-
-          # Filter out non-project sources to keep report small and relevant.
-          if [ -n "${ignore_errors}" ]; then
-            lcov -r coverage.info \
-              '/usr/include/*' \
-              '*/build/entservices-appgateway-l1tests-only/_deps/*' \
-              '*/install/usr/include/*' \
-              '*/Tests/headers/*' \
-              '*/Tests/mocks/*' \
-              '*/Tests/L1Tests/tests/*' \
-              '*/Thunder/*' \
-              --ignore-errors "${ignore_errors}" \
-              -o filtered_coverage.info || true
-          else
-            lcov -r coverage.info \
-              '/usr/include/*' \
-              '*/build/entservices-appgateway-l1tests-only/_deps/*' \
-              '*/install/usr/include/*' \
-              '*/Tests/headers/*' \
-              '*/Tests/mocks/*' \
-              '*/Tests/L1Tests/tests/*' \
-              '*/Thunder/*' \
-              -o filtered_coverage.info || true
-          fi
-
-          if [ ! -s filtered_coverage.info ]; then
-            echo "filtered_coverage.info missing/empty; skipping HTML generation"
-            exit 0
-          fi
-
-          if [ -n "${ignore_errors}" ]; then
-            lcov -e filtered_coverage.info '*/AppGateway/*' --ignore-errors "${ignore_errors}" -o appgateway_only_coverage.info || true
-          else
-            lcov -e filtered_coverage.info '*/AppGateway/*' -o appgateway_only_coverage.info || true
-          fi
-          if [ ! -s appgateway_only_coverage.info ]; then
-            echo "appgateway_only_coverage.info missing/empty; skipping HTML generation"
-            exit 0
-          fi
-
-          cp -f appgateway_only_coverage.info "$ARTIFACT_ROOT/appgateway_only_coverage.info"
-
-          mkdir -p "$ARTIFACT_ROOT/coverage-html"
-          # Keep genhtml output visible to make failures diagnosable.
-          genhtml "$ARTIFACT_ROOT/appgateway_only_coverage.info" \
-            --ignore-errors source \
-            --output-directory "$ARTIFACT_ROOT/coverage-html" || true
-
-          if [ -f "$ARTIFACT_ROOT/coverage-html/index.html" ]; then
-            echo "Generated HTML coverage at: entservices-appgateway/coverage-html/index.html"
-          else
-            echo "HTML coverage index.html not generated (see genhtml output above)."
-          fi
-
-      - name: Upload artifacts (diagnostics + coverage)
+      - name: Upload artifacts
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-L1-appgateway
-          # Upload the full staged artifact root so we don't accidentally miss files
-          # when coverage/test tooling changes filenames or emits additional diagnostics.
-          #
-          # Coverage completeness:
-          # - entservices-appgateway/coverage.info + appgateway_only_coverage.info: LCOV details incl. lines/branches/hits
-          # - entservices-appgateway/coverage-html/**: full HTML report (index.html + per-file pages)
-          # - workspace-level coverage*.info/coverage/: best-effort capture of any alternate outputs
           path: |
-            entservices-appgateway/**
-            build/entservices-appgateway-l1tests-only/**/*.log
-            build/entservices-appgateway-l1tests-only/**/Testing/**
-
-            # Best-effort: capture any outputs produced outside ARTIFACT_ROOT.
             coverage/
-            coverage*.info
-            filtered_coverage.info
-            appgateway_only_coverage.info
+            valgrind_log
+            rdkL1TestResultsWithoutValgrind.json
+            rdkL1TestResultsWithValgrind.json
           if-no-files-found: warn
-
-      - name: Fail job if L1 tests failed (after artifacts/coverage)
-        if: ${{ env.L1_TEST_EXIT_CODE != '' && env.L1_TEST_EXIT_CODE != '0' }}
-        run: |
-          echo "L1 tests failed with exit code: ${{ env.L1_TEST_EXIT_CODE }}"
-          exit 1
