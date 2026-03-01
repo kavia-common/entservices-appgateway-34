@@ -727,43 +727,125 @@ jobs:
           cp -rf $(pwd)/rdkL2TestResults.json $GITHUB_WORKSPACE/rdkL2TestResultsWithValgrind.json &&
           rm -rf $(pwd)/rdkL2TestResults.json
 
-      - name: Generate coverage
+      - name: Generate coverage report (lcov + HTML via genhtml)
         if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
-        run: >
-          cp $GITHUB_WORKSPACE/entservices-testframework/Tests/L2Tests/.lcovrc_l2 ~/.lcovrc
-          &&
-          lcov -c
-          -o coverage.info
-          -d build/entservices-appgateway
-          &&
-          lcov
-          -r coverage.info
-          '/usr/include/*'
-          '*/build/entservices-appgateway/_deps/*'
-          '*/build/entservices-deviceanddisplay/_deps/*'
-          '*/build/entservices-entservices-testframework/_deps/*'
-          '*/install/usr/include/*'
-          '*/Tests/headers/*'
-          '*/Tests/mocks/*'
-          '*/build/mocks/*'
-          '*/Tests/L2Tests/*'
-          '*/googlemock/*'
-          '*/googletest/*'
-          '*/sqlite/*'
-          -o filtered_coverage.info
-          &&
-          genhtml
-          -o coverage
-          -t "entservices-appgateway coverage"
-          filtered_coverage.info
+        continue-on-error: true
+        run: |
+          set -euo pipefail
 
-      - name: Upload artifacts
+          ARTIFACT_ROOT="$GITHUB_WORKSPACE/entservices-appgateway"
+          mkdir -p "$ARTIFACT_ROOT"
+
+          rm -rf coverage coverage.info filtered_coverage.info "$ARTIFACT_ROOT/coverage-html" || true
+
+          # Ensure we use the L2 lcov configuration when present.
+          if [ -f "$GITHUB_WORKSPACE/entservices-testframework/Tests/L2Tests/.lcovrc_l2" ]; then
+            cp "$GITHUB_WORKSPACE/entservices-testframework/Tests/L2Tests/.lcovrc_l2" ~/.lcovrc
+          fi
+
+          echo "lcov version:"
+          lcov --version || true
+          echo "genhtml version:"
+          genhtml --version || true
+
+          echo "Debug: listing gcda/gcno files (top 200) under build dir:"
+          find "$GITHUB_WORKSPACE/build/entservices-appgateway" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
+
+          # lcov/geninfo flag compatibility:
+          # Some versions reject `--ignore-errors mismatch` and/or `--ignore-errors empty`.
+          # To keep CI compatible, detect support and fall back to a safe set.
+          ignore_errors=""
+          if lcov --help 2>&1 | grep -qE -- "--ignore-errors(=| )"; then
+            supported=""
+            if lcov --help 2>&1 | grep -q "mismatch"; then
+              supported="mismatch"
+            fi
+            if lcov --help 2>&1 | grep -q "empty"; then
+              supported="${supported:+${supported},}empty"
+            fi
+            ignore_errors="$supported"
+          fi
+          echo "Using lcov --ignore-errors: ${ignore_errors:-<none>}"
+
+          # Capture from build tree. If capture fails, we still want test artifacts uploaded.
+          if [ -n "${ignore_errors}" ]; then
+            lcov -c -o coverage.info -d build/entservices-appgateway --ignore-errors "${ignore_errors}" || true
+          else
+            lcov -c -o coverage.info -d build/entservices-appgateway || true
+          fi
+
+          # Always stage raw coverage.info if it exists, even if later steps fail.
+          if [ -s coverage.info ]; then
+            cp -f coverage.info "$ARTIFACT_ROOT/coverage.info"
+          else
+            echo "coverage.info missing/empty; skipping filtering + HTML generation"
+            exit 0
+          fi
+
+          # Filter out non-project sources to keep report small and relevant.
+          # Use ignore-errors only if supported.
+          if [ -n "${ignore_errors}" ]; then
+            lcov -r coverage.info \
+              '/usr/include/*' \
+              '*/build/entservices-appgateway/_deps/*' \
+              '*/build/entservices-deviceanddisplay/_deps/*' \
+              '*/build/entservices-entservices-testframework/_deps/*' \
+              '*/install/usr/include/*' \
+              '*/Tests/headers/*' \
+              '*/Tests/mocks/*' \
+              '*/build/mocks/*' \
+              '*/Tests/L2Tests/*' \
+              '*/googlemock/*' \
+              '*/googletest/*' \
+              '*/sqlite/*' \
+              --ignore-errors "${ignore_errors}" \
+              -o filtered_coverage.info || true
+          else
+            lcov -r coverage.info \
+              '/usr/include/*' \
+              '*/build/entservices-appgateway/_deps/*' \
+              '*/build/entservices-deviceanddisplay/_deps/*' \
+              '*/build/entservices-entservices-testframework/_deps/*' \
+              '*/install/usr/include/*' \
+              '*/Tests/headers/*' \
+              '*/Tests/mocks/*' \
+              '*/build/mocks/*' \
+              '*/Tests/L2Tests/*' \
+              '*/googlemock/*' \
+              '*/googletest/*' \
+              '*/sqlite/*' \
+              -o filtered_coverage.info || true
+          fi
+
+          if [ ! -s filtered_coverage.info ]; then
+            echo "filtered_coverage.info missing/empty; skipping HTML generation"
+            exit 0
+          fi
+
+          cp -f filtered_coverage.info "$ARTIFACT_ROOT/filtered_coverage.info"
+
+          mkdir -p "$ARTIFACT_ROOT/coverage-html"
+          genhtml \
+            -o "$ARTIFACT_ROOT/coverage-html" \
+            -t "entservices-appgateway coverage" \
+            filtered_coverage.info || true
+
+          if [ -f "$ARTIFACT_ROOT/coverage-html/index.html" ]; then
+            echo "Generated HTML coverage at: entservices-appgateway/coverage-html/index.html"
+          else
+            echo "HTML coverage index.html not generated (see genhtml output above)."
+          fi
+
+      - name: Upload artifacts (tests + valgrind + coverage)
         if: ${{ !env.ACT }}
         uses: actions/upload-artifact@v4
         with:
           name: artifacts-L2-infra
           path: |
+            entservices-appgateway/**
             coverage/
+            coverage*.info
+            filtered_coverage.info
             valgrind_log
             rdkL2TestResultsWithoutValgrind.json
             rdkL2TestResultsWithValgrind.json

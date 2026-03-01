@@ -102,6 +102,7 @@ jobs:
             sudo ninja -C build install
 
       - name: Checkout entservices-appgateway
+        if: ${{ !env.ACT }}
         uses: actions/checkout@v3
 
       - name: Checkout Thunder
@@ -604,29 +605,40 @@ jobs:
           echo "Debug: listing gcda/gcno files (top 200) under build dir:"
           find "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
 
-          # Some lcov/geninfo versions do NOT support:
-          #   --ignore-errors mismatch
-          # and will fail with:
-          #   geninfo ERROR: unknown argument for --ignore-errors: mismatch
-          #
-          # To be version-compatible, detect support and fall back to a safer set.
-          ignore_errors="empty"
+          # lcov/geninfo flag compatibility:
+          # Some versions reject `--ignore-errors mismatch` and/or `--ignore-errors empty`.
+          # To keep CI compatible, detect support and fall back to a safe set (or none).
+          ignore_errors=""
           if lcov --help 2>&1 | grep -qE -- "--ignore-errors(=| )"; then
+            supported=""
             if lcov --help 2>&1 | grep -q "mismatch"; then
-              ignore_errors="mismatch,empty"
+              supported="mismatch"
             fi
+            if lcov --help 2>&1 | grep -q "empty"; then
+              supported="${supported:+${supported},}empty"
+            fi
+            ignore_errors="$supported"
           fi
-          echo "Using lcov --ignore-errors: ${ignore_errors}"
+          echo "Using lcov --ignore-errors: ${ignore_errors:-<none>}"
 
           # Capture coverage from the build tree. Keep verbose output to diagnose empty captures.
           # Do not fail the job if capture fails; artifacts and test logs should still upload.
-          lcov --capture \
-            --base-directory "$GITHUB_WORKSPACE" \
-            --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" \
-            --output-file coverage.info \
-            --ignore-errors "${ignore_errors}" \
-            --rc lcov_branch_coverage=0 \
-            --verbose || true
+          if [ -n "${ignore_errors}" ]; then
+            lcov --capture \
+              --base-directory "$GITHUB_WORKSPACE" \
+              --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" \
+              --output-file coverage.info \
+              --ignore-errors "${ignore_errors}" \
+              --rc lcov_branch_coverage=0 \
+              --verbose || true
+          else
+            lcov --capture \
+              --base-directory "$GITHUB_WORKSPACE" \
+              --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" \
+              --output-file coverage.info \
+              --rc lcov_branch_coverage=0 \
+              --verbose || true
+          fi
 
           # Always stage raw coverage.info if it exists, even if later filtering/html generation fails.
           if [ -s coverage.info ]; then
@@ -637,23 +649,39 @@ jobs:
           fi
 
           # Filter out non-project sources to keep report small and relevant.
-          lcov -r coverage.info \
-            '/usr/include/*' \
-            '*/build/entservices-appgateway-l1tests-only/_deps/*' \
-            '*/install/usr/include/*' \
-            '*/Tests/headers/*' \
-            '*/Tests/mocks/*' \
-            '*/Tests/L1Tests/tests/*' \
-            '*/Thunder/*' \
-            --ignore-errors empty \
-            -o filtered_coverage.info || true
+          if [ -n "${ignore_errors}" ]; then
+            lcov -r coverage.info \
+              '/usr/include/*' \
+              '*/build/entservices-appgateway-l1tests-only/_deps/*' \
+              '*/install/usr/include/*' \
+              '*/Tests/headers/*' \
+              '*/Tests/mocks/*' \
+              '*/Tests/L1Tests/tests/*' \
+              '*/Thunder/*' \
+              --ignore-errors "${ignore_errors}" \
+              -o filtered_coverage.info || true
+          else
+            lcov -r coverage.info \
+              '/usr/include/*' \
+              '*/build/entservices-appgateway-l1tests-only/_deps/*' \
+              '*/install/usr/include/*' \
+              '*/Tests/headers/*' \
+              '*/Tests/mocks/*' \
+              '*/Tests/L1Tests/tests/*' \
+              '*/Thunder/*' \
+              -o filtered_coverage.info || true
+          fi
 
           if [ ! -s filtered_coverage.info ]; then
             echo "filtered_coverage.info missing/empty; skipping HTML generation"
             exit 0
           fi
 
-          lcov -e filtered_coverage.info '*/AppGateway/*' --ignore-errors empty -o appgateway_only_coverage.info || true
+          if [ -n "${ignore_errors}" ]; then
+            lcov -e filtered_coverage.info '*/AppGateway/*' --ignore-errors "${ignore_errors}" -o appgateway_only_coverage.info || true
+          else
+            lcov -e filtered_coverage.info '*/AppGateway/*' -o appgateway_only_coverage.info || true
+          fi
           if [ ! -s appgateway_only_coverage.info ]; then
             echo "appgateway_only_coverage.info missing/empty; skipping HTML generation"
             exit 0
@@ -680,13 +708,18 @@ jobs:
           name: artifacts-L1-appgateway
           # Upload the full staged artifact root so we don't accidentally miss files
           # when coverage/test tooling changes filenames or emits additional diagnostics.
+          #
+          # Coverage completeness:
+          # - entservices-appgateway/coverage.info + appgateway_only_coverage.info: LCOV details incl. lines/branches/hits
+          # - entservices-appgateway/coverage-html/**: full HTML report (index.html + per-file pages)
+          # - workspace-level coverage*.info/coverage/: best-effort capture of any alternate outputs
           path: |
             entservices-appgateway/**
             build/entservices-appgateway-l1tests-only/**/*.log
             build/entservices-appgateway-l1tests-only/**/Testing/**
 
-            # Also upload any lcov outputs that might have been left in the workspace root
-            # (best effort; harmless if absent).
+            # Best-effort: capture any outputs produced outside ARTIFACT_ROOT.
+            coverage/
             coverage*.info
             filtered_coverage.info
             appgateway_only_coverage.info
