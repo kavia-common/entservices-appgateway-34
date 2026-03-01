@@ -58,35 +58,57 @@ namespace Plugin {
     private:
         class EXTERNAL RespondJob : public Core::IDispatch
         {
+        private:
+            // Keep parent alive for the *full* lifetime of the job object without relying on
+            // RespondJob's virtual destructor. This avoids teardown-time __cxa_pure_virtual
+            // crashes when WorkerPool drains jobs during plugin/test shutdown.
+            class ParentRef final
+            {
+            public:
+                ParentRef() = delete;
+                explicit ParentRef(AppGatewayImplementation* parent)
+                    : _parent(parent)
+                {
+                    if (_parent != nullptr) {
+                        _parent->AddRef();
+                    }
+                }
+                ParentRef(const ParentRef&) = delete;
+                ParentRef& operator=(const ParentRef&) = delete;
+
+                ~ParentRef()
+                {
+                    if (_parent != nullptr) {
+                        _parent->Release();
+                        _parent = nullptr;
+                    }
+                }
+
+            private:
+                AppGatewayImplementation* _parent;
+            };
+
         protected:
             RespondJob(AppGatewayImplementation* parent,
                        const Context& context,
                        const std::string& payload,
                        const std::string& destination)
                 : mParent(parent)
+                , mParentRef(parent)
                 , mPayload(payload)
                 , mContext(context)
                 , mDestination(destination)
             {
-                // Keep the parent object alive until this job is dispatched.
-                // This prevents teardown-time use-after-free when WorkerPool drains after tests.
-                if (mParent != nullptr) {
-                    mParent->AddRef();
-                }
             }
 
         public:
             RespondJob() = delete;
-            RespondJob(const RespondJob &) = delete;
-            RespondJob &operator=(const RespondJob &) = delete;
+            RespondJob(const RespondJob&) = delete;
+            RespondJob& operator=(const RespondJob&) = delete;
 
-            ~RespondJob() override
-            {
-                if (mParent != nullptr) {
-                    mParent->Release();
-                    mParent = nullptr;
-                }
-            }
+            // Intentionally no explicit destructor:
+            // - We avoid RespondJob::~RespondJob() virtual teardown behavior.
+            // - mParentRef's non-virtual destructor safely releases the parent.
 
         public:
             static Core::ProxyType<Core::IDispatch> Create(AppGatewayImplementation* parent,
@@ -94,7 +116,8 @@ namespace Plugin {
                                                           const std::string& payload,
                                                           const std::string& origin)
             {
-                return (Core::ProxyType<Core::IDispatch>(Core::ProxyType<RespondJob>::Create(parent, context, payload, origin)));
+                return (Core::ProxyType<Core::IDispatch>(
+                    Core::ProxyType<RespondJob>::Create(parent, context, payload, origin)));
             }
 
             void Dispatch() override
@@ -114,6 +137,7 @@ namespace Plugin {
 
         private:
             AppGatewayImplementation* mParent;
+            ParentRef mParentRef;
             const std::string mPayload;
             const Context mContext;
             const std::string mDestination;
