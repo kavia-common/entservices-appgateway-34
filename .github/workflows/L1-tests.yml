@@ -378,6 +378,24 @@ jobs:
           test -f "$GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
           echo "Found: $GITHUB_WORKSPACE/install/usr/lib/cmake/ConfigGenerator/ConfigGeneratorConfig.cmake"
 
+      - name: Stage INetworkManager.h into install prefix (required for AppGateway compile)
+        run: |
+          set -euo pipefail
+
+          # Some AppGateway builds expect this interface header to be available under the local prefix.
+          # Fetch from upstream networkmanager repo and stage into:
+          #   $GITHUB_WORKSPACE/install/usr/include/WPEFramework/interfaces/INetworkManager.h
+          dst_dir="$GITHUB_WORKSPACE/install/usr/include/WPEFramework/interfaces"
+          mkdir -p "$dst_dir"
+
+          url="https://raw.githubusercontent.com/rdkcentral/networkmanager/develop/interface/INetworkManager.h"
+          echo "Downloading: $url"
+          curl -fsSL "$url" -o "$dst_dir/INetworkManager.h"
+
+          echo "Staged header at: $dst_dir/INetworkManager.h"
+          test -s "$dst_dir/INetworkManager.h"
+          head -n 5 "$dst_dir/INetworkManager.h" || true
+
       - name: Build AppGateway L1 tests (Tests/L1Tests only; NO install; coverage enabled)
         # Script parity: configure/build ONLY Tests/L1Tests and avoid install-time /etc writes.
         run: |
