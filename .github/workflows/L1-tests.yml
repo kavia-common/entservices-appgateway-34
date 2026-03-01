@@ -596,24 +596,47 @@ jobs:
 
           rm -rf coverage coverage.info filtered_coverage.info appgateway_only_coverage.info "$ARTIFACT_ROOT/coverage-html" || true
 
+          echo "lcov version:"
+          lcov --version || true
+          echo "genhtml version:"
+          genhtml --version || true
+
           echo "Debug: listing gcda/gcno files (top 200) under build dir:"
           find "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
 
-          # Capture coverage from the entire build tree.
-          # Use verbose output so we can diagnose empty captures from CI logs.
+          # Some lcov/geninfo versions do NOT support:
+          #   --ignore-errors mismatch
+          # and will fail with:
+          #   geninfo ERROR: unknown argument for --ignore-errors: mismatch
+          #
+          # To be version-compatible, detect support and fall back to a safer set.
+          ignore_errors="empty"
+          if lcov --help 2>&1 | grep -qE -- "--ignore-errors(=| )"; then
+            if lcov --help 2>&1 | grep -q "mismatch"; then
+              ignore_errors="mismatch,empty"
+            fi
+          fi
+          echo "Using lcov --ignore-errors: ${ignore_errors}"
+
+          # Capture coverage from the build tree. Keep verbose output to diagnose empty captures.
+          # Do not fail the job if capture fails; artifacts and test logs should still upload.
           lcov --capture \
             --base-directory "$GITHUB_WORKSPACE" \
             --directory "$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only" \
             --output-file coverage.info \
-            --ignore-errors mismatch,empty \
+            --ignore-errors "${ignore_errors}" \
             --rc lcov_branch_coverage=0 \
             --verbose || true
 
-          if [ ! -s coverage.info ]; then
-            echo "coverage.info missing/empty; skipping HTML generation"
+          # Always stage raw coverage.info if it exists, even if later filtering/html generation fails.
+          if [ -s coverage.info ]; then
+            cp -f coverage.info "$ARTIFACT_ROOT/coverage.info"
+          else
+            echo "coverage.info missing/empty; skipping filtering + HTML generation"
             exit 0
           fi
 
+          # Filter out non-project sources to keep report small and relevant.
           lcov -r coverage.info \
             '/usr/include/*' \
             '*/build/entservices-appgateway-l1tests-only/_deps/*' \
