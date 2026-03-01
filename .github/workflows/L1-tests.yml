@@ -11,6 +11,16 @@ on:
         description: "Specifies the source type (e.g., local or test framework) for the workflow."
         required: true
         type: string
+      enable_gdb:
+        description: "Opt-in: run the L1 test binary under gdb in batch mode (prints stack trace on crash)."
+        required: false
+        type: boolean
+        default: false
+      enable_debug_macro:
+        description: "Opt-in: add a compile-time macro for L1 tests (APPGATEWAY_L1_DEBUG=1)."
+        required: false
+        type: boolean
+        default: false
     secrets:
       RDKCM_RDKE:
         required: true
@@ -21,6 +31,12 @@ env:
   INTERFACES_REF: "develop"
   AUTOMATICS_UNAME: ${{ secrets.AUTOMATICS_UNAME}}
   AUTOMATICS_PASSCODE: ${{ secrets. AUTOMATICS_PASSCODE}}
+
+  # Opt-in toggles (default behavior unchanged):
+  # - ENABLE_GDB=1 enables running unit tests under gdb (batch mode)
+  # - ENABLE_DEBUG_MACRO=1 enables compile-time macro APPGATEWAY_L1_DEBUG=1 for L1 test build
+  ENABLE_GDB: ${{ (inputs.enable_gdb && '1') || '0' }}
+  ENABLE_DEBUG_MACRO: ${{ (inputs.enable_debug_macro && '1') || '0' }}
 
 jobs:
   L1-tests:
@@ -407,6 +423,19 @@ jobs:
           export COVERAGE_CXX_FLAGS="-O0 -g --coverage -fprofile-arcs -ftest-coverage"
           export COVERAGE_LINKER_FLAGS="--coverage"
 
+          # Optional compile-time debug macro (opt-in).
+          # When enabled, code/tests may use:
+          #   #if APPGATEWAY_L1_DEBUG
+          #     ...
+          #   #endif
+          EXTRA_DEBUG_DEFS=""
+          if [ "${ENABLE_DEBUG_MACRO:-0}" = "1" ]; then
+            EXTRA_DEBUG_DEFS="-DAPPGATEWAY_L1_DEBUG=1"
+            echo "ENABLE_DEBUG_MACRO=1 -> enabling compile-time macro: APPGATEWAY_L1_DEBUG=1"
+          else
+            echo "ENABLE_DEBUG_MACRO!=1 -> no extra debug macro enabled (default behavior)"
+          fi
+
           # Make sure CMake (and any helper Find*.cmake modules) can locate generator tools
           # installed into the repo-local prefix. This is critical for `act`, where the
           # environment can differ from GitHub-hosted runners.
@@ -431,8 +460,8 @@ jobs:
             -DPLUGIN_APPGATEWAY=ON \
             -DPLUGIN_APPGATEWAYCOMMON=ON \
             -DPLUGIN_APPNOTIFICATIONS=OFF \
-            -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS}" \
-            -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS}" \
+            -DCMAKE_C_FLAGS="${COVERAGE_C_FLAGS} ${EXTRA_DEBUG_DEFS}" \
+            -DCMAKE_CXX_FLAGS="${COVERAGE_CXX_FLAGS} ${EXTRA_DEBUG_DEFS}" \
             -DCMAKE_EXE_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}" \
             -DCMAKE_SHARED_LINKER_FLAGS="${COVERAGE_LINKER_FLAGS}" \
             -DCMAKE_VERBOSE_MAKEFILE=ON
@@ -467,14 +496,34 @@ jobs:
           echo "APPGATEWAY_CONFIG_PATH=/tmp/app-gateway" >> "$GITHUB_ENV"
           ls -la /tmp/app-gateway || true
 
-      - name: Run unit tests without valgrind
-        run: >
-          PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
-          LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
-          GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
-          build/entservices-appgateway-l1tests-only/AppGatewayL1Test &&
-          cp -rf $(pwd)/rdkL1TestResults.json $GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json &&
-          rm -rf $(pwd)/rdkL1TestResults.json
+      - name: Run unit tests without valgrind (optionally under gdb)
+        run: |
+          set -euo pipefail
+
+          export PATH="$GITHUB_WORKSPACE/install/usr/bin:${PATH}"
+          export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
+          export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+
+          test_bin="build/entservices-appgateway-l1tests-only/AppGatewayL1Test"
+
+          if [ "${ENABLE_GDB:-0}" = "1" ]; then
+            echo "ENABLE_GDB=1 -> running unit tests under gdb (batch mode)."
+            # Notes:
+            # - `run` returns the inferior exit code.
+            # - On crash, `bt full` is printed for debugging.
+            # - `--args` allows passing args to the binary if needed later.
+            gdb -q -batch \
+              -ex "set pagination off" \
+              -ex "run" \
+              -ex "bt full" \
+              --args "${test_bin}"
+          else
+            echo "ENABLE_GDB!=1 -> running unit tests normally (default behavior)."
+            "${test_bin}"
+          fi
+
+          cp -rf "$(pwd)/rdkL1TestResults.json" "$GITHUB_WORKSPACE/rdkL1TestResultsWithoutValgrind.json"
+          rm -rf "$(pwd)/rdkL1TestResults.json"
 
       - name: Run unit tests with valgrind
         if: ${{ !env.ACT }}
