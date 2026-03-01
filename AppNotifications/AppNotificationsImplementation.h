@@ -23,6 +23,7 @@
 #include <interfaces/IConfiguration.h>
 #include <mutex>
 #include <map>
+#include <atomic>
 #include "UtilsLogging.h"
 #include "UtilsController.h"
 #include "ContextUtils.h"
@@ -74,6 +75,10 @@ namespace Plugin {
             void DispatchToGateway(const string& key, const Exchange::IAppNotifications::AppNotificationContext& context, const string& payload);
 
             void DispatchToLaunchDelegate(const string& key, const Exchange::IAppNotifications::AppNotificationContext& context, const string& payload);
+
+            // Clears cached Thunder interface pointers (used during shutdown).
+            void ClearCachedInterfaces();
+
             void CleanupNotifications(const uint32_t &connectionId, const string& origin);
         private:
             AppNotificationsImplementation& mParent;
@@ -244,6 +249,10 @@ namespace Plugin {
         };
 
     private:
+        // Background jobs may still be queued/executing on Core::IWorkerPool during teardown.
+        // Guard all code paths that use mShell / cached Thunder interfaces to avoid UAF/SEGV.
+        std::atomic<bool> mIsShuttingDown{false};
+
         PluginHost::IShell* mShell;
         SubscriberMap mSubMap;
         ThunderSubscriptionManager mThunderManager;

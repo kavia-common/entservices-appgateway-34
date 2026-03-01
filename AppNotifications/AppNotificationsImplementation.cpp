@@ -44,6 +44,13 @@ namespace WPEFramework
 
         AppNotificationsImplementation::~AppNotificationsImplementation()
         {
+            // Background jobs may still be queued/executing on Core::IWorkerPool.
+            // Mark shutdown first so they can safely bail out before using mShell.
+            mIsShuttingDown.store(true, std::memory_order_release);
+
+            // Ensure any cached interfaces are not used after teardown begins.
+            mSubMap.ClearCachedInterfaces();
+
             // Cleanup resources if needed
             if (mShell != nullptr)
             {
@@ -188,7 +195,24 @@ namespace WPEFramework
             }
         }
 
+        void AppNotificationsImplementation::SubscriberMap::ClearCachedInterfaces() {
+            // NOTE: We intentionally do not Release() these here because their lifetime is owned by Thunder,
+            // and we use raw pointers as cache. Releasing during teardown could race with job execution.
+            // Instead, null them so any running job will re-query (and will be guarded by mShell checks),
+            // or safely no-op during shutdown.
+            mAppGateway = nullptr;
+            mInternalGatewayNotifier = nullptr;
+        }
+
         void AppNotificationsImplementation::SubscriberMap::DispatchToGateway(const string& key, const Exchange::IAppNotifications::AppNotificationContext& context, const string& payload) {
+            if (mParent.mIsShuttingDown.load(std::memory_order_acquire)) {
+                return;
+            }
+            if (mParent.mShell == nullptr) {
+                LOGWARN("DispatchToGateway called after shell teardown; skipping");
+                return;
+            }
+
             if (nullptr == mAppGateway) {
                 mAppGateway = mParent.mShell->QueryInterfaceByCallsign<Exchange::IAppGatewayResponder>(APP_GATEWAY_CALLSIGN);
                 if (mAppGateway == nullptr) {
@@ -201,6 +225,14 @@ namespace WPEFramework
         }
 
         void AppNotificationsImplementation::SubscriberMap::DispatchToLaunchDelegate(const string& key, const Exchange::IAppNotifications::AppNotificationContext& context, const string& payload) {
+            if (mParent.mIsShuttingDown.load(std::memory_order_acquire)) {
+                return;
+            }
+            if (mParent.mShell == nullptr) {
+                LOGWARN("DispatchToLaunchDelegate called after shell teardown; skipping");
+                return;
+            }
+
             if (nullptr == mInternalGatewayNotifier) {
                 mInternalGatewayNotifier = mParent.mShell->QueryInterfaceByCallsign<Exchange::IAppGatewayResponder>(INTERNAL_GATEWAY_CALLSIGN);
                 if (mInternalGatewayNotifier == nullptr) {
@@ -255,6 +287,16 @@ namespace WPEFramework
         bool AppNotificationsImplementation::ThunderSubscriptionManager::HandleNotifier(const string& module, const string& event, const bool& listen) {
             // Check if Plugins is activated before making a request
             bool status = false;
+
+            // During teardown, WorkerPool jobs / destructors may still run; avoid using mShell.
+            if (mParent.mIsShuttingDown.load(std::memory_order_acquire)) {
+                return false;
+            }
+            if (mParent.mShell == nullptr) {
+                LOGWARN("HandleNotifier called after shell teardown; skipping module=%s event=%s", module.c_str(), event.c_str());
+                return false;
+            }
+
             Exchange::IAppNotificationHandler *internalNotifier = mParent.mShell->QueryInterfaceByCallsign<Exchange::IAppNotificationHandler>(module);
             if (internalNotifier != nullptr) {
                 if (Core::ERROR_NONE == internalNotifier->HandleAppEventNotifier(&mParent.mEmitter, event, listen, status)) {
