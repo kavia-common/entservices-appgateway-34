@@ -504,40 +504,33 @@ jobs:
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
           export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
 
-          # Avoid libgcov timestamp overwrite errors:
-          # - If cached/previous build artifacts are present, stale *.gcda files can conflict with the
-          #   newly produced objects and gcov emits:
-          #     "libgcov profiling error: overwriting an existing profile data with a different timestamp"
-          # - Clean *.gcda files before running tests, and isolate runtime gcov output under a per-run directory.
+          # Deterministic cleanup:
+          # - Remove stale *.gcda to avoid libgcov timestamp overwrite errors
+          # - Remove any prior coverage outputs so a rerun cannot accidentally upload old artifacts
           #
-          # Note: we keep *.gcno (generated at compile time) intact.
+          # IMPORTANT: Do NOT use GCOV_PREFIX here.
+          # Using GCOV_PREFIX relocates *.gcda away from their corresponding *.gcno, which causes lcov:
+          #   - "cannot open notes file" (missing *.gcno)
+          #   - "stamp mismatch with notes file"
+          # Keeping default behavior writes *.gcda next to *.gcno in the build tree, which is what lcov expects.
           build_dir="$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only"
           echo "Cleaning stale gcov data under: ${build_dir}"
           find "${build_dir}" -type f -name '*.gcda' -print -delete 2>/dev/null || true
+          rm -rf "$GITHUB_WORKSPACE/coverage-html" "$GITHUB_WORKSPACE/coverage.info" "$GITHUB_WORKSPACE/filtered_coverage.info" "$GITHUB_WORKSPACE/coverage" 2>/dev/null || true
 
           # Reset counters (harmless if no data exists yet) to ensure a clean baseline.
           if command -v lcov >/dev/null 2>&1; then
             lcov --directory "${build_dir}" --zerocounters || true
           fi
 
-          # Isolate runtime coverage writes away from the build tree (helps when paths differ or when
-          # multiple test invocations might otherwise collide).
-          gcov_out_root="$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
-          mkdir -p "${gcov_out_root}"
-          export GCOV_PREFIX="${gcov_out_root}"
-          # Strip leading '/' so absolute paths are mirrored under $GCOV_PREFIX/<abs/path...>
-          export GCOV_PREFIX_STRIP=1
-          echo "GCOV_PREFIX=${GCOV_PREFIX}"
-          echo "GCOV_PREFIX_STRIP=${GCOV_PREFIX_STRIP}"
+          # Explicitly unset, in case a prior step/environment had these set.
+          unset GCOV_PREFIX || true
+          unset GCOV_PREFIX_STRIP || true
 
           test_bin="build/entservices-appgateway-l1tests-only/AppGatewayL1Test"
 
           if [ "${ENABLE_GDB:-0}" = "1" ]; then
             echo "ENABLE_GDB=1 -> running unit tests under gdb (batch mode)."
-            # Notes:
-            # - `run` returns the inferior exit code.
-            # - On crash, `bt full` is printed for debugging.
-            # - `--args` allows passing args to the binary if needed later.
             gdb -q -batch \
               -ex "set pagination off" \
               -ex "run" \
@@ -557,8 +550,6 @@ jobs:
           PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
-          GCOV_PREFIX=$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
-          GCOV_PREFIX_STRIP=1
           valgrind
           --tool=memcheck
           --log-file=valgrind_log
@@ -596,17 +587,14 @@ jobs:
           genhtml --version || true
 
           build_dir="$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only"
-          gcov_out_root="$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
 
           echo "Debug: listing gcda/gcno files (top 200) under build dir:"
           find "${build_dir}" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
-          echo "Debug: listing gcda/gcno files (top 200) under GCOV_PREFIX dir:"
-          find "${gcov_out_root}" -type f \( -name '*.gcda' -o -name '*.gcno' \) | head -n 200 || true
 
-          # Capture coverage from both:
-          #  - build dir (in case some gcda ended up there)
-          #  - isolated GCOV_PREFIX dir (preferred)
-          lcov -c -o coverage.info -d "${build_dir}" -d "${gcov_out_root}" || true
+          # Capture coverage from the build directory.
+          # With GCOV_PREFIX disabled, *.gcda and *.gcno paths match, preventing lcov/genhtml
+          # "notes file" and "stamp mismatch" errors.
+          lcov -c -o coverage.info -d "${build_dir}" || true
 
           if [ ! -s coverage.info ]; then
             echo "coverage.info missing/empty; skipping filtering + HTML generation"
