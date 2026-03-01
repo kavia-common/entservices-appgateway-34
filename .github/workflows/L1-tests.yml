@@ -504,6 +504,32 @@ jobs:
           export LD_LIBRARY_PATH="$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH:-}"
           export GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
 
+          # Avoid libgcov timestamp overwrite errors:
+          # - If cached/previous build artifacts are present, stale *.gcda files can conflict with the
+          #   newly produced objects and gcov emits:
+          #     "libgcov profiling error: overwriting an existing profile data with a different timestamp"
+          # - Clean *.gcda files before running tests, and isolate runtime gcov output under a per-run directory.
+          #
+          # Note: we keep *.gcno (generated at compile time) intact.
+          build_dir="$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only"
+          echo "Cleaning stale gcov data under: ${build_dir}"
+          find "${build_dir}" -type f -name '*.gcda' -print -delete 2>/dev/null || true
+
+          # Reset counters (harmless if no data exists yet) to ensure a clean baseline.
+          if command -v lcov >/dev/null 2>&1; then
+            lcov --directory "${build_dir}" --zerocounters || true
+          fi
+
+          # Isolate runtime coverage writes away from the build tree (helps when paths differ or when
+          # multiple test invocations might otherwise collide).
+          gcov_out_root="$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+          mkdir -p "${gcov_out_root}"
+          export GCOV_PREFIX="${gcov_out_root}"
+          # Strip leading '/' so absolute paths are mirrored under $GCOV_PREFIX/<abs/path...>
+          export GCOV_PREFIX_STRIP=1
+          echo "GCOV_PREFIX=${GCOV_PREFIX}"
+          echo "GCOV_PREFIX_STRIP=${GCOV_PREFIX_STRIP}"
+
           test_bin="build/entservices-appgateway-l1tests-only/AppGatewayL1Test"
 
           if [ "${ENABLE_GDB:-0}" = "1" ]; then
@@ -531,6 +557,8 @@ jobs:
           PATH=$GITHUB_WORKSPACE/install/usr/bin:${PATH}
           LD_LIBRARY_PATH=$GITHUB_WORKSPACE/install/usr/lib:$GITHUB_WORKSPACE/install/usr/lib/wpeframework/plugins:${LD_LIBRARY_PATH}
           GTEST_OUTPUT="json:$(pwd)/rdkL1TestResults.json"
+          GCOV_PREFIX=$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}
+          GCOV_PREFIX_STRIP=1
           valgrind
           --tool=memcheck
           --log-file=valgrind_log
@@ -544,28 +572,34 @@ jobs:
 
       - name: Generate coverage
         if: ${{ matrix.coverage == 'with-coverage' && !env.ACT }}
-        run: >
-          cp $GITHUB_WORKSPACE/Tests/L1Tests/.lcovrc_l1 ~/.lcovrc
-          &&
-          lcov -c
-          -o coverage.info
-          -d build/entservices-appgateway-l1tests-only
-          &&
-          lcov
-          -r coverage.info
-          '/usr/include/*'
-          '*/build/entservices-appgateway-l1tests-only/_deps/*'
-          '*/install/usr/include/*'
-          '*/Tests/headers/*'
-          '*/Tests/mocks/*'
-          '*/Tests/L1Tests/tests/*'
-          '*/Thunder/*'
-          -o filtered_coverage.info
-          &&
-          genhtml
-          -o coverage
-          -t "entservices-appgateway coverage"
-          filtered_coverage.info
+        run: |
+          set -euo pipefail
+
+          cp "$GITHUB_WORKSPACE/Tests/L1Tests/.lcovrc_l1" ~/.lcovrc
+
+          build_dir="$GITHUB_WORKSPACE/build/entservices-appgateway-l1tests-only"
+          gcov_out_root="$GITHUB_WORKSPACE/.gcov/${{ matrix.compiler }}-${{ matrix.coverage }}-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}"
+
+          # Capture coverage from both:
+          #  - build dir (in case some gcda ended up there)
+          #  - isolated GCOV_PREFIX dir (preferred)
+          lcov -c -o coverage.info -d "${build_dir}" -d "${gcov_out_root}"
+
+          lcov \
+            -r coverage.info \
+            '/usr/include/*' \
+            '*/build/entservices-appgateway-l1tests-only/_deps/*' \
+            '*/install/usr/include/*' \
+            '*/Tests/headers/*' \
+            '*/Tests/mocks/*' \
+            '*/Tests/L1Tests/tests/*' \
+            '*/Thunder/*' \
+            -o filtered_coverage.info
+
+          genhtml \
+            -o coverage \
+            -t "entservices-appgateway coverage" \
+            filtered_coverage.info
 
       - name: Upload artifacts
         if: ${{ !env.ACT }}
